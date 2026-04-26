@@ -1,0 +1,9 @@
+[project]
+name = "asset-viewer-standalone"
+version = "0.1.0"
+description = "Standalone asset viewer webapp (backend + frontend)"
+authors = ["BubbaNodes <metalgfx@gmail.com>"]
+license = "MIT"
+
+[tool.setuptools]
+packages = ["backend"]
