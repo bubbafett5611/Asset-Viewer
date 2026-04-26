@@ -722,4 +722,6 @@ def api_assets_details():
     return jsonify({'asset': item})
 
 if __name__ == '__main__':
+    logger.info('Bubba Asset Viewer server started on http://localhost:5001')
     app.run(debug=True, port=5001)
+    
