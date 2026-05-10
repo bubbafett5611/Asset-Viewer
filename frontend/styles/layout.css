@@ -766,7 +766,7 @@ body.panel-resizing {
 }
 
 /* Ensure all controls in rows align consistently */
-.input, .select, .button, .btn, .button--ghost, .tab-button {
+.input, .select, .button, .button--ghost, .tab-button {
 	display: inline-flex;
 	align-items: center;
 	gap: 8px;

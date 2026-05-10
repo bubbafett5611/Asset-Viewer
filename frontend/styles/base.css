@@ -201,38 +201,6 @@ body::before {
 	justify-content: center;
 }
 
-.btn {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	gap: 8px;
-	padding: 8px 16px;
-	border: 1px solid transparent;
-	border-radius: 8px;
-	font: inherit;
-	font-size: 0.9rem;
-	font-weight: 500;
-	cursor: pointer;
-	transition: border-color var(--transition-base), background-color var(--transition-base), color var(--transition-base);
-}
-
-.btn-secondary {
-	background: var(--surface-08);
-	color: var(--text);
-}
-
-.btn-secondary:hover {
-	background: var(--surface-12);
-}
-
-.btn-danger {
-	background: var(--dr-red);
-	color: white;
-}
-
-.btn-danger:hover {
-	background: var(--dr-red-strong);
-}
 
 body.drag-upload-active {
 	user-select: none;

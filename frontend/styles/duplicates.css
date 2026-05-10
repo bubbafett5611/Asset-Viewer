@@ -231,12 +231,11 @@
 		grid-template-columns: 1fr;
 	}
 
-	.duplicate-scan-button,
-	.field--small {
-		max-width: none;
-	}
-
 	.duplicate-scan-button {
 		width: 100%;
+	}
+
+	.field--small {
+		max-width: none;
 	}
 }
