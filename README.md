@@ -38,7 +38,7 @@ Notes
 
 - Open `http://localhost:5001/` to use the Vue UI.
 - The repository includes a small CSV sample dataset at [frontend/danbooru_e621_merged.csv](frontend/danbooru_e621_merged.csv) used by the frontend for demonstrations.
-- The Vue UI currently imports Vue 3 from `https://unpkg.com`, so first-load usage needs network access unless Vue is vendored locally later.
+- The Vue UI uses a vendored Vue 3 ESM build at `frontend/vendor/vue.esm-browser.prod.js`, so first-load usage does not depend on a CDN.
 
 Running tests
 

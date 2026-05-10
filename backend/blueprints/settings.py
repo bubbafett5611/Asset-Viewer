@@ -1,21 +1,17 @@
 from __future__ import annotations
 
-import importlib
-
 from flask import Blueprint
+
+from services import settings_api
 
 settings_bp = Blueprint("settings", __name__)
 
 
-def _server_module():
-    return importlib.import_module("server")
-
-
 @settings_bp.route('/api/settings', methods=['GET'])
 def api_settings():
-    return _server_module().api_settings()
+    return settings_api.api_settings_handler()
 
 
 @settings_bp.route('/api/settings', methods=['PUT'])
 def api_update_settings():
-    return _server_module().api_update_settings()
+    return settings_api.api_update_settings_handler()

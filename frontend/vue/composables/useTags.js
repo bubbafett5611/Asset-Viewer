@@ -1,224 +1,228 @@
-import { computed } from "https://unpkg.com/vue@3/dist/vue.esm-browser.prod.js";
+import { computed } from '/vendor/vue.esm-browser.prod.js';
 
 export function useTags(options) {
-    const {
-        API,
-        buildQuery,
-        saveArrayToStorage,
-        favoritesKey,
-        recentKey,
-        normalizeTagQuery,
-        parseAliases,
-        tags,
-        tagFilters,
-        tagCategoriesList,
-        selectedTag,
-        tagStatusText,
-        isLoadingTags,
-        tagExamplesLoading,
-        tagExamples,
-        hasLoadedTags,
-        tagTotal,
-        tagOffset,
-        tagPageSize,
-        favoriteTagNames,
-        recentTagNames,
-    } = options;
+  const {
+    API,
+    buildQuery,
+    saveArrayToStorage,
+    favoritesKey,
+    recentKey,
+    normalizeTagQuery,
+    parseAliases,
+    tags,
+    tagFilters,
+    tagCategoriesList,
+    selectedTag,
+    tagStatusText,
+    isLoadingTags,
+    tagExamplesLoading,
+    tagExamples,
+    hasLoadedTags,
+    tagTotal,
+    tagOffset,
+    tagPageSize,
+    favoriteTagNames,
+    recentTagNames
+  } = options;
 
-    let tagSearchTimer = null;
+  let tagSearchTimer = null;
 
-    const tagCategories = computed(() => tagCategoriesList.value);
-    const filteredTags = computed(() => {
-        const q = normalizeTagQuery(tagFilters.q);
+  const tagCategories = computed(() => tagCategoriesList.value);
+  const filteredTags = computed(() => {
+    const q = normalizeTagQuery(tagFilters.q);
 
-        return tags.value.filter((tag) => {
-            if (tagFilters.view === "favorites" && !favoriteTagNames.value.has(tag.name)) {
-                return false;
-            }
-            if (tagFilters.view === "recent" && !recentTagNames.value.includes(tag.name)) {
-                return false;
-            }
-            if (!q) {
-                return true;
-            }
-            return normalizeTagQuery(`${tag.name} ${tag.aliases}`).includes(q);
-        });
+    return tags.value.filter((tag) => {
+      if (tagFilters.view === 'favorites' && !favoriteTagNames.value.has(tag.name)) {
+        return false;
+      }
+      if (tagFilters.view === 'recent' && !recentTagNames.value.includes(tag.name)) {
+        return false;
+      }
+      if (!q) {
+        return true;
+      }
+      return normalizeTagQuery(`${tag.name} ${tag.aliases}`).includes(q);
     });
-    const visibleTags = computed(() => filteredTags.value);
-    const tagHasMore = computed(() => tagFilters.view === "all" && tags.value.length < tagTotal.value);
-    const tagCountText = computed(() => `Showing ${visibleTags.value.length} of ${tagTotal.value} tag(s)`);
-    const selectedTagAliases = computed(() => parseAliases(selectedTag.value?.aliases));
-    const selectedTagExamples = computed(() => {
-        if (!selectedTag.value) {
-            return [];
-        }
-        const examples = tagExamples.value[selectedTag.value.name] || {};
-        return Object.entries(examples)
-            .map(([site, value]) => ({
-                site,
-                score: typeof value?.score === "number" ? value.score : null,
-                image_url: value?.image_url || "",
-                page_url: value?.page_url || value?.post_url || "",
-            }))
-            .filter((item) => item.image_url || item.page_url);
-    });
+  });
+  const visibleTags = computed(() => filteredTags.value);
+  const tagHasMore = computed(() => tagFilters.view === 'all' && tags.value.length < tagTotal.value);
+  const tagCountText = computed(() => `Showing ${visibleTags.value.length} of ${tagTotal.value} tag(s)`);
+  const selectedTagAliases = computed(() => parseAliases(selectedTag.value?.aliases));
+  const selectedTagExamples = computed(() => {
+    if (!selectedTag.value) {
+      return [];
+    }
+    const examples = tagExamples.value[selectedTag.value.name] || {};
+    return Object.entries(examples)
+      .map(([site, value]) => ({
+        site,
+        score: typeof value?.score === 'number' ? value.score : null,
+        image_url: value?.image_url || '',
+        page_url: value?.page_url || value?.post_url || ''
+      }))
+      .filter((item) => item.image_url || item.page_url);
+  });
 
-    async function fetchTags({ append = false } = {}) {
-        isLoadingTags.value = true;
-        tagStatusText.value = append ? "Loading more tags..." : "Loading tags...";
+  async function fetchTags({ append = false } = {}) {
+    isLoadingTags.value = true;
+    tagStatusText.value = append ? 'Loading more tags...' : 'Loading tags...';
 
-        try {
-            const nextOffset = append ? tagOffset.value : 0;
-            const response = await fetch(buildQuery(API.tags, {
-                q: tagFilters.q,
-                category: tagFilters.category,
-                limit: tagPageSize,
-                offset: nextOffset,
-            }));
-            if (!response.ok) {
-                throw new Error(`Failed to load tags (${response.status})`);
-            }
+    try {
+      const nextOffset = append ? tagOffset.value : 0;
+      const response = await fetch(
+        buildQuery(API.tags, {
+          q: tagFilters.q,
+          category: tagFilters.category,
+          limit: tagPageSize,
+          offset: nextOffset
+        })
+      );
+      if (!response.ok) {
+        throw new Error(`Failed to load tags (${response.status})`);
+      }
 
-            const payload = await response.json();
-            const incoming = Array.isArray(payload.tags) ? payload.tags : [];
-            const normalizedIncoming = incoming.map((tag) => ({
-                name: String(tag.name || ""),
-                category: String(tag.category || ""),
-                count: Number(tag.count || 0),
-                aliases: String(tag.aliases || ""),
-            }));
-            tags.value = append ? tags.value.concat(normalizedIncoming) : normalizedIncoming;
-            tagOffset.value = tags.value.length;
-            tagTotal.value = Number(payload.total || tags.value.length);
-            tagCategoriesList.value = Array.isArray(payload.categories) ? payload.categories.map(String) : tagCategoriesList.value;
+      const payload = await response.json();
+      const incoming = Array.isArray(payload.tags) ? payload.tags : [];
+      const normalizedIncoming = incoming.map((tag) => ({
+        name: String(tag.name || ''),
+        category: String(tag.category || ''),
+        count: Number(tag.count || 0),
+        aliases: String(tag.aliases || '')
+      }));
+      tags.value = append ? tags.value.concat(normalizedIncoming) : normalizedIncoming;
+      tagOffset.value = tags.value.length;
+      tagTotal.value = Number(payload.total || tags.value.length);
+      tagCategoriesList.value = Array.isArray(payload.categories)
+        ? payload.categories.map(String)
+        : tagCategoriesList.value;
 
-            hasLoadedTags.value = true;
-            tagStatusText.value = `Loaded ${tags.value.length} of ${tagTotal.value} tag(s).`;
+      hasLoadedTags.value = true;
+      tagStatusText.value = `Loaded ${tags.value.length} of ${tagTotal.value} tag(s).`;
 
-            if (selectedTag.value) {
-                const refreshed = tags.value.find((tag) => tag.name === selectedTag.value.name);
-                selectedTag.value = refreshed || null;
-            }
-        } catch (error) {
-            console.error(error);
-            tagStatusText.value = error?.message || "Failed to load tags.";
-        } finally {
-            isLoadingTags.value = false;
-        }
+      if (selectedTag.value) {
+        const refreshed = tags.value.find((tag) => tag.name === selectedTag.value.name);
+        selectedTag.value = refreshed || null;
+      }
+    } catch (error) {
+      console.error(error);
+      tagStatusText.value = error?.message || 'Failed to load tags.';
+    } finally {
+      isLoadingTags.value = false;
+    }
+  }
+
+  function isTagFavorite(tagName) {
+    return favoriteTagNames.value.has(tagName);
+  }
+
+  function persistFavorites() {
+    saveArrayToStorage(favoritesKey, Array.from(favoriteTagNames.value));
+  }
+
+  function persistRecent() {
+    saveArrayToStorage(recentKey, recentTagNames.value);
+  }
+
+  function toggleTagFavorite(tag) {
+    if (!tag?.name) {
+      return;
     }
 
-    function isTagFavorite(tagName) {
-        return favoriteTagNames.value.has(tagName);
+    const next = new Set(favoriteTagNames.value);
+    if (next.has(tag.name)) {
+      next.delete(tag.name);
+    } else {
+      next.add(tag.name);
     }
 
-    function persistFavorites() {
-        saveArrayToStorage(favoritesKey, Array.from(favoriteTagNames.value));
+    favoriteTagNames.value = next;
+    persistFavorites();
+  }
+
+  function loadMoreTags() {
+    if (!tagHasMore.value || isLoadingTags.value) {
+      return;
+    }
+    fetchTags({ append: true });
+  }
+
+  async function fetchTagExamples(tagName) {
+    if (!tagName) {
+      return;
     }
 
-    function persistRecent() {
-        saveArrayToStorage(recentKey, recentTagNames.value);
+    tagExamplesLoading.value = true;
+    try {
+      const url = buildQuery(API.tagExamples, { tag: tagName });
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to load examples (${response.status})`);
+      }
+      const payload = await response.json();
+      tagExamples.value = {
+        ...tagExamples.value,
+        [tagName]: payload.examples && typeof payload.examples === 'object' ? payload.examples : {}
+      };
+    } catch (error) {
+      console.error(error);
+    } finally {
+      tagExamplesLoading.value = false;
     }
+  }
 
-    function toggleTagFavorite(tag) {
-        if (!tag?.name) {
-            return;
-        }
+  async function selectTag(tag) {
+    selectedTag.value = tag;
+    recentTagNames.value = [tag.name, ...recentTagNames.value.filter((name) => name !== tag.name)].slice(0, 50);
+    persistRecent();
+    await fetchTagExamples(tag.name);
+  }
 
-        const next = new Set(favoriteTagNames.value);
-        if (next.has(tag.name)) {
-            next.delete(tag.name);
-        } else {
-            next.add(tag.name);
-        }
+  function exampleImageUrl(url) {
+    return buildQuery(API.tagExampleImage, { url });
+  }
 
-        favoriteTagNames.value = next;
-        persistFavorites();
+  function tagSearchUrl(tagName, site) {
+    if (site === 'danbooru') {
+      return `https://danbooru.donmai.us/posts?tags=${encodeURIComponent(tagName)}`;
     }
+    return `https://e621.net/posts?tags=${encodeURIComponent(tagName)}`;
+  }
 
-    function loadMoreTags() {
-        if (!tagHasMore.value || isLoadingTags.value) {
-            return;
-        }
-        fetchTags({ append: true });
+  function scheduleTagSearch() {
+    if (!hasLoadedTags.value || tagFilters.view !== 'all') {
+      return;
     }
-
-    async function fetchTagExamples(tagName) {
-        if (!tagName) {
-            return;
-        }
-
-        tagExamplesLoading.value = true;
-        try {
-            const url = buildQuery(API.tagExamples, { tag: tagName });
-            const response = await fetch(url);
-            if (!response.ok) {
-                throw new Error(`Failed to load examples (${response.status})`);
-            }
-            const payload = await response.json();
-            tagExamples.value = {
-                ...tagExamples.value,
-                [tagName]: payload.examples && typeof payload.examples === "object" ? payload.examples : {},
-            };
-        } catch (error) {
-            console.error(error);
-        } finally {
-            tagExamplesLoading.value = false;
-        }
+    if (tagSearchTimer) {
+      clearTimeout(tagSearchTimer);
     }
+    tagSearchTimer = setTimeout(() => {
+      fetchTags({ append: false });
+    }, 180);
+  }
 
-    async function selectTag(tag) {
-        selectedTag.value = tag;
-        recentTagNames.value = [tag.name, ...recentTagNames.value.filter((name) => name !== tag.name)].slice(0, 50);
-        persistRecent();
-        await fetchTagExamples(tag.name);
+  function clearTagSearchTimer() {
+    if (tagSearchTimer) {
+      clearTimeout(tagSearchTimer);
+      tagSearchTimer = null;
     }
+  }
 
-    function exampleImageUrl(url) {
-        return buildQuery(API.tagExampleImage, { url });
-    }
-
-    function tagSearchUrl(tagName, site) {
-        if (site === "danbooru") {
-            return `https://danbooru.donmai.us/posts?tags=${encodeURIComponent(tagName)}`;
-        }
-        return `https://e621.net/posts?tags=${encodeURIComponent(tagName)}`;
-    }
-
-    function scheduleTagSearch() {
-        if (!hasLoadedTags.value || tagFilters.view !== "all") {
-            return;
-        }
-        if (tagSearchTimer) {
-            clearTimeout(tagSearchTimer);
-        }
-        tagSearchTimer = setTimeout(() => {
-            fetchTags({ append: false });
-        }, 180);
-    }
-
-    function clearTagSearchTimer() {
-        if (tagSearchTimer) {
-            clearTimeout(tagSearchTimer);
-            tagSearchTimer = null;
-        }
-    }
-
-    return {
-        tagCategories,
-        filteredTags,
-        visibleTags,
-        tagHasMore,
-        tagCountText,
-        selectedTagAliases,
-        selectedTagExamples,
-        fetchTags,
-        isTagFavorite,
-        toggleTagFavorite,
-        loadMoreTags,
-        selectTag,
-        exampleImageUrl,
-        tagSearchUrl,
-        scheduleTagSearch,
-        clearTagSearchTimer,
-    };
+  return {
+    tagCategories,
+    filteredTags,
+    visibleTags,
+    tagHasMore,
+    tagCountText,
+    selectedTagAliases,
+    selectedTagExamples,
+    fetchTags,
+    isTagFavorite,
+    toggleTagFavorite,
+    loadMoreTags,
+    selectTag,
+    exampleImageUrl,
+    tagSearchUrl,
+    scheduleTagSearch,
+    clearTagSearchTimer
+  };
 }

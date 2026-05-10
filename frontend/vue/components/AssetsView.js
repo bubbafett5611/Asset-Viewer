@@ -1,187 +1,187 @@
-import { AssetCard } from "/vue/components/AssetCard.js";
-import { AssetDetailsPanel } from "/vue/components/AssetDetailsPanel.js";
+import { AssetCard } from '/vue/components/AssetCard.js';
+import { AssetDetailsPanel } from '/vue/components/AssetDetailsPanel.js';
 
 export const AssetsView = {
-    name: "AssetsView",
-    components: {
-        AssetCard,
-        AssetDetailsPanel,
+  name: 'AssetsView',
+  components: {
+    AssetCard,
+    AssetDetailsPanel
+  },
+  props: {
+    layoutStyle: {
+      type: Object,
+      required: true
     },
-    props: {
-        layoutStyle: {
-            type: Object,
-            required: true,
-        },
-        filters: {
-            type: Object,
-            required: true,
-        },
-        roots: {
-            type: Array,
-            required: true,
-        },
-        metadataFilterList: {
-            type: Array,
-            required: true,
-        },
-        assets: {
-            type: Array,
-            required: true,
-        },
-        selectedAsset: {
-            type: Object,
-            default: null,
-        },
-        details: {
-            type: Object,
-            default: null,
-        },
-        selectedPath: {
-            type: String,
-            required: true,
-        },
-        selectedPathSetHas: {
-            type: Function,
-            required: true,
-        },
-        blurThumbnails: {
-            type: Boolean,
-            default: false,
-        },
-        statusText: {
-            type: String,
-            required: true,
-        },
-        selectedCount: {
-            type: Number,
-            required: true,
-        },
-        deleteCount: {
-            type: Number,
-            required: true,
-        },
-        isLoading: {
-            type: Boolean,
-            default: false,
-        },
-        isLoadingMore: {
-            type: Boolean,
-            default: false,
-        },
-        isDeleting: {
-            type: Boolean,
-            default: false,
-        },
-        hasMore: {
-            type: Boolean,
-            default: false,
-        },
-        currentRootLabel: {
-            type: String,
-            required: true,
-        },
-        densityClass: {
-            type: String,
-            required: true,
-        },
-        assetListStyle: {
-            type: Object,
-            required: true,
-        },
-        shouldVirtualize: {
-            type: Boolean,
-            default: false,
-        },
-        visibleAssets: {
-            type: Array,
-            required: true,
-        },
-        virtualSpacerStyle: {
-            type: Object,
-            required: true,
-        },
-        virtualWindowStyle: {
-            type: Object,
-            required: true,
-        },
-        assetListRef: {
-            type: Function,
-            required: true,
-        },
-        searchInputRef: {
-            type: Function,
-            required: true,
-        },
-        onAssetListScroll: {
-            type: Function,
-            required: true,
-        },
-        refreshAssets: {
-            type: Function,
-            required: true,
-        },
-        loadMore: {
-            type: Function,
-            required: true,
-        },
-        selectAsset: {
-            type: Function,
-            required: true,
-        },
-        clearSelection: {
-            type: Function,
-            required: true,
-        },
-        copySelectedPaths: {
-            type: Function,
-            required: true,
-        },
-        exportSelectedAssets: {
-            type: Function,
-            required: true,
-        },
-        openCompareSelection: {
-            type: Function,
-            required: true,
-        },
-        requestDeleteSelected: {
-            type: Function,
-            required: true,
-        },
-        requestDeleteAsset: {
-            type: Function,
-            required: true,
-        },
-        hideDeleteConfirm: {
-            type: Function,
-            required: true,
-        },
-        confirmDelete: {
-            type: Function,
-            required: true,
-        },
-        safeDelete: {
-            type: Boolean,
-            default: true,
-        },
-        startDetailsResize: {
-            type: Function,
-            required: true,
-        },
-        startPreviewResize: {
-            type: Function,
-            required: true,
-        },
-        openContainingFolder: {
-            type: Function,
-            required: true,
-        },
-        repairSelectedMetadata: {
-            type: Function,
-            required: true,
-        },
+    filters: {
+      type: Object,
+      required: true
     },
-    template: `
+    roots: {
+      type: Array,
+      required: true
+    },
+    metadataFilterList: {
+      type: Array,
+      required: true
+    },
+    assets: {
+      type: Array,
+      required: true
+    },
+    selectedAsset: {
+      type: Object,
+      default: null
+    },
+    details: {
+      type: Object,
+      default: null
+    },
+    selectedPath: {
+      type: String,
+      required: true
+    },
+    selectedPathSetHas: {
+      type: Function,
+      required: true
+    },
+    blurThumbnails: {
+      type: Boolean,
+      default: false
+    },
+    statusText: {
+      type: String,
+      required: true
+    },
+    selectedCount: {
+      type: Number,
+      required: true
+    },
+    deleteCount: {
+      type: Number,
+      required: true
+    },
+    isLoading: {
+      type: Boolean,
+      default: false
+    },
+    isLoadingMore: {
+      type: Boolean,
+      default: false
+    },
+    isDeleting: {
+      type: Boolean,
+      default: false
+    },
+    hasMore: {
+      type: Boolean,
+      default: false
+    },
+    currentRootLabel: {
+      type: String,
+      required: true
+    },
+    densityClass: {
+      type: String,
+      required: true
+    },
+    assetListStyle: {
+      type: Object,
+      required: true
+    },
+    shouldVirtualize: {
+      type: Boolean,
+      default: false
+    },
+    visibleAssets: {
+      type: Array,
+      required: true
+    },
+    virtualSpacerStyle: {
+      type: Object,
+      required: true
+    },
+    virtualWindowStyle: {
+      type: Object,
+      required: true
+    },
+    assetListRef: {
+      type: Function,
+      required: true
+    },
+    searchInputRef: {
+      type: Function,
+      required: true
+    },
+    onAssetListScroll: {
+      type: Function,
+      required: true
+    },
+    refreshAssets: {
+      type: Function,
+      required: true
+    },
+    loadMore: {
+      type: Function,
+      required: true
+    },
+    selectAsset: {
+      type: Function,
+      required: true
+    },
+    clearSelection: {
+      type: Function,
+      required: true
+    },
+    copySelectedPaths: {
+      type: Function,
+      required: true
+    },
+    exportSelectedAssets: {
+      type: Function,
+      required: true
+    },
+    openCompareSelection: {
+      type: Function,
+      required: true
+    },
+    requestDeleteSelected: {
+      type: Function,
+      required: true
+    },
+    requestDeleteAsset: {
+      type: Function,
+      required: true
+    },
+    hideDeleteConfirm: {
+      type: Function,
+      required: true
+    },
+    confirmDelete: {
+      type: Function,
+      required: true
+    },
+    safeDelete: {
+      type: Boolean,
+      default: true
+    },
+    startDetailsResize: {
+      type: Function,
+      required: true
+    },
+    startPreviewResize: {
+      type: Function,
+      required: true
+    },
+    openContainingFolder: {
+      type: Function,
+      required: true
+    },
+    repairSelectedMetadata: {
+      type: Function,
+      required: true
+    }
+  },
+  template: `
         <div class="layout assets-layout tab-panel" :style="layoutStyle">
             <section class="panel assets-panel">
                 <div class="controls assets-controls">
@@ -256,7 +256,7 @@ export const AssetsView = {
                             >
                                 Compare
                             </button>
-                            <details v-if="deleteCount > 0" class="action-menu">
+                            <details v-if="deleteCount > 0" class="action-menu assets-action-menu">
                                 <summary>Selection</summary>
                                 <div class="action-menu-panel">
                                     <button type="button" @click="copySelectedPaths">Copy Paths</button>
@@ -322,7 +322,7 @@ export const AssetsView = {
                         />
                     </div>
 
-                    <button v-if="hasMore" class="button" type="button" :disabled="isLoadingMore" @click="loadMore">
+                    <button v-if="hasMore" class="button assets-load-more-button" type="button" :disabled="isLoadingMore" @click="loadMore">
                         {{ isLoadingMore ? 'Loading...' : 'Load More' }}
                     </button>
                 </div>
@@ -346,5 +346,5 @@ export const AssetsView = {
                 @resize-preview="startPreviewResize"
             />
         </div>
-    `,
+    `
 };

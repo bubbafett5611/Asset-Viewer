@@ -1,37 +1,37 @@
 export const TagDetailsPanel = {
-    name: "TagDetailsPanel",
-    props: {
-        selectedTag: {
-            type: Object,
-            default: null,
-        },
-        favorite: {
-            type: Boolean,
-            default: false,
-        },
-        aliases: {
-            type: Array,
-            default: () => [],
-        },
-        examples: {
-            type: Array,
-            default: () => [],
-        },
-        examplesLoading: {
-            type: Boolean,
-            default: false,
-        },
-        exampleImageUrl: {
-            type: Function,
-            required: true,
-        },
-        tagSearchUrl: {
-            type: Function,
-            required: true,
-        },
+  name: 'TagDetailsPanel',
+  props: {
+    selectedTag: {
+      type: Object,
+      default: null
     },
-    emits: ["toggle-favorite"],
-    template: `
+    favorite: {
+      type: Boolean,
+      default: false
+    },
+    aliases: {
+      type: Array,
+      default: () => []
+    },
+    examples: {
+      type: Array,
+      default: () => []
+    },
+    examplesLoading: {
+      type: Boolean,
+      default: false
+    },
+    exampleImageUrl: {
+      type: Function,
+      required: true
+    },
+    tagSearchUrl: {
+      type: Function,
+      required: true
+    }
+  },
+  emits: ['toggle-favorite'],
+  template: `
         <aside class="panel tag-details-panel details">
             <div class="details-header">
                 <h2>Tag Details</h2>
@@ -83,5 +83,5 @@ export const TagDetailsPanel = {
                 <div v-else class="empty">No tag selected.</div>
             </div>
         </aside>
-    `,
+    `
 };

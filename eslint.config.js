@@ -2,6 +2,9 @@ import globals from "globals";
 
 export default [
   {
+    ignores: ["frontend/vendor/**"]
+  },
+  {
     files: ["frontend/**/*.js"],
     languageOptions: {
       ecmaVersion: 2023,

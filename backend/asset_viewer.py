@@ -807,6 +807,7 @@ def scan_duplicate_assets(
 	near_threshold: int = 6,
 	limit: int = 5000,
 	progress_callback: Callable[[dict[str, Any]], None] | None = None,
+	cancel_check: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
 	from services.asset_viewer_duplicates import scan_duplicate_assets as _scan_duplicate_assets
 
@@ -820,6 +821,7 @@ def scan_duplicate_assets(
 		near_threshold=near_threshold,
 		limit=limit,
 		progress_callback=progress_callback,
+		cancel_check=cancel_check,
 	)
 
 
@@ -839,19 +841,23 @@ def scan_assets(
 	metadata_mode: str = METADATA_MODE_ALL,
 	metadata_badge_filter: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-	from services.asset_viewer_scanning import scan_assets as _scan_assets
+	from services.asset_viewer_scanning import ScanRuntime, scan_assets as _scan_assets
 
-	return _scan_assets(
-		root=root,
-		summarize_metadata_fn=summarize_metadata,
-		detect_metadata_badges_fn=_detect_metadata_badges,
-		has_bubba_generation_metadata_fn=_has_bubba_generation_metadata,
-		is_path_within_root_fn=_is_path_within_root,
+	runtime = ScanRuntime(
+		summarize_metadata=summarize_metadata,
+		detect_metadata_badges=_detect_metadata_badges,
+		has_bubba_generation_metadata=_has_bubba_generation_metadata,
+		is_path_within_root=_is_path_within_root,
 		report_cache_dirname=REPORT_CACHE_DIRNAME,
 		metadata_mode_all=METADATA_MODE_ALL,
 		valid_metadata_modes=VALID_METADATA_MODES,
 		badge_key_no_tracked_metadata=BADGE_KEY_NO_TRACKED_METADATA,
 		valid_metadata_badge_keys=VALID_METADATA_BADGE_KEYS,
+	)
+
+	return _scan_assets(
+		runtime=runtime,
+		root=root,
 		query=query,
 		extensions=extensions,
 		limit=limit,

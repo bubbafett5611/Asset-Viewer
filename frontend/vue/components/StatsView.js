@@ -1,44 +1,44 @@
 export const StatsView = {
-    name: "StatsView",
-    props: {
-        layoutStyle: {
-            type: Object,
-            required: true,
-        },
-        statsRootReports: {
-            type: Array,
-            required: true,
-        },
-        isLoadingAnyFolderStats: {
-            type: Boolean,
-            default: false,
-        },
-        isLoadingAnyMetadataHealth: {
-            type: Boolean,
-            default: false,
-        },
-        fetchFolderStats: {
-            type: Function,
-            required: true,
-        },
-        fetchMetadataHealth: {
-            type: Function,
-            required: true,
-        },
-        fetchRootFolderStats: {
-            type: Function,
-            required: true,
-        },
-        fetchRootMetadataHealth: {
-            type: Function,
-            required: true,
-        },
-        exportMetadataHealth: {
-            type: Function,
-            required: true,
-        },
+  name: 'StatsView',
+  props: {
+    layoutStyle: {
+      type: Object,
+      required: true
     },
-    template: `
+    statsRootReports: {
+      type: Array,
+      required: true
+    },
+    isLoadingAnyFolderStats: {
+      type: Boolean,
+      default: false
+    },
+    isLoadingAnyMetadataHealth: {
+      type: Boolean,
+      default: false
+    },
+    fetchFolderStats: {
+      type: Function,
+      required: true
+    },
+    fetchMetadataHealth: {
+      type: Function,
+      required: true
+    },
+    fetchRootFolderStats: {
+      type: Function,
+      required: true
+    },
+    fetchRootMetadataHealth: {
+      type: Function,
+      required: true
+    },
+    exportMetadataHealth: {
+      type: Function,
+      required: true
+    }
+  },
+  template: `
         <div class="layout layout--single layout--utility stats-layout tab-panel" :style="layoutStyle">
             <section class="panel stats-panel">
                 <div class="settings-header stats-header">
@@ -121,5 +121,5 @@ export const StatsView = {
                 </div>
             </section>
         </div>
-    `,
+    `
 };

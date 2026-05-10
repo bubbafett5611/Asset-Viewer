@@ -1,140 +1,156 @@
-import { thumbUrl } from "/vue/api.js";
+import { thumbUrl } from '/vue/api.js';
 
 function metadataBadges(asset) {
-    return Array.isArray(asset?.metadata_badges) ? asset.metadata_badges : [];
+  return Array.isArray(asset?.metadata_badges) ? asset.metadata_badges : [];
 }
 
 export const DuplicatesView = {
-    name: "DuplicatesView",
-    props: {
-        layoutStyle: {
-            type: Object,
-            required: true,
-        },
-        roots: {
-            type: Array,
-            required: true,
-        },
-        filters: {
-            type: Object,
-            required: true,
-        },
-        duplicateSettings: {
-            type: Object,
-            required: true,
-        },
-        isScanningDuplicates: {
-            type: Boolean,
-            default: false,
-        },
-        duplicateStatusText: {
-            type: String,
-            required: true,
-        },
-        duplicateCountText: {
-            type: String,
-            required: true,
-        },
-        duplicateScanProgress: {
-            type: Number,
-            required: true,
-        },
-        duplicateScanPhase: {
-            type: String,
-            required: true,
-        },
-        duplicateScanProgressText: {
-            type: String,
-            required: true,
-        },
-        duplicateGroups: {
-            type: Array,
-            required: true,
-        },
-        canCompareSelection: {
-            type: Boolean,
-            default: false,
-        },
-        selectedCount: {
-            type: Number,
-            required: true,
-        },
-        deleteCount: {
-            type: Number,
-            required: true,
-        },
-        isDeleting: {
-            type: Boolean,
-            default: false,
-        },
-        selectedPathSetHas: {
-            type: Function,
-            required: true,
-        },
-        scanDuplicates: {
-            type: Function,
-            required: true,
-        },
-        openCompareSelection: {
-            type: Function,
-            required: true,
-        },
-        selectAllDuplicateGroupsExcept: {
-            type: Function,
-            required: true,
-        },
-        copySelectedPaths: {
-            type: Function,
-            required: true,
-        },
-        exportDuplicateGroups: {
-            type: Function,
-            required: true,
-        },
-        requestDeleteSelected: {
-            type: Function,
-            required: true,
-        },
-        clearSelection: {
-            type: Function,
-            required: true,
-        },
-        selectDuplicateAsset: {
-            type: Function,
-            required: true,
-        },
-        selectDuplicateGroupPaths: {
-            type: Function,
-            required: true,
-        },
-        selectDuplicateGroupExcept: {
-            type: Function,
-            required: true,
-        },
-        duplicateKindLabel: {
-            type: Function,
-            required: true,
-        },
-        duplicateGroupSubtitle: {
-            type: Function,
-            required: true,
-        },
-        markDuplicateThumbFailed: {
-            type: Function,
-            required: true,
-        },
-        startDetailsResize: {
-            type: Function,
-            required: true,
-        },
+  name: 'DuplicatesView',
+  props: {
+    layoutStyle: {
+      type: Object,
+      required: true
     },
-    setup() {
-        return {
-            thumbUrl,
-            metadataBadges,
-        };
+    roots: {
+      type: Array,
+      required: true
     },
-    template: `
+    filters: {
+      type: Object,
+      required: true
+    },
+    duplicateSettings: {
+      type: Object,
+      required: true
+    },
+    isScanningDuplicates: {
+      type: Boolean,
+      default: false
+    },
+    isCancellingDuplicateScan: {
+      type: Boolean,
+      default: false
+    },
+    duplicateStatusText: {
+      type: String,
+      required: true
+    },
+    duplicateTaskId: {
+      type: String,
+      default: ''
+    },
+    duplicateTaskStatusText: {
+      type: String,
+      default: ''
+    },
+    duplicateCountText: {
+      type: String,
+      required: true
+    },
+    duplicateScanProgress: {
+      type: Number,
+      required: true
+    },
+    duplicateScanPhase: {
+      type: String,
+      required: true
+    },
+    duplicateScanProgressText: {
+      type: String,
+      required: true
+    },
+    duplicateGroups: {
+      type: Array,
+      required: true
+    },
+    canCompareSelection: {
+      type: Boolean,
+      default: false
+    },
+    selectedCount: {
+      type: Number,
+      required: true
+    },
+    deleteCount: {
+      type: Number,
+      required: true
+    },
+    isDeleting: {
+      type: Boolean,
+      default: false
+    },
+    selectedPathSetHas: {
+      type: Function,
+      required: true
+    },
+    scanDuplicates: {
+      type: Function,
+      required: true
+    },
+    cancelDuplicateScan: {
+      type: Function,
+      required: true
+    },
+    openCompareSelection: {
+      type: Function,
+      required: true
+    },
+    selectAllDuplicateGroupsExcept: {
+      type: Function,
+      required: true
+    },
+    copySelectedPaths: {
+      type: Function,
+      required: true
+    },
+    exportDuplicateGroups: {
+      type: Function,
+      required: true
+    },
+    requestDeleteSelected: {
+      type: Function,
+      required: true
+    },
+    clearSelection: {
+      type: Function,
+      required: true
+    },
+    selectDuplicateAsset: {
+      type: Function,
+      required: true
+    },
+    selectDuplicateGroupPaths: {
+      type: Function,
+      required: true
+    },
+    selectDuplicateGroupExcept: {
+      type: Function,
+      required: true
+    },
+    duplicateKindLabel: {
+      type: Function,
+      required: true
+    },
+    duplicateGroupSubtitle: {
+      type: Function,
+      required: true
+    },
+    markDuplicateThumbFailed: {
+      type: Function,
+      required: true
+    },
+    startDetailsResize: {
+      type: Function,
+      required: true
+    }
+  },
+  setup() {
+    return {
+      thumbUrl,
+      metadataBadges
+    };
+  },
+  template: `
         <div class="layout layout--single duplicates-layout tab-panel" :style="layoutStyle">
             <section class="panel duplicates-panel">
                 <div class="controls duplicate-controls duplicates-controls">
@@ -173,6 +189,9 @@ export const DuplicatesView = {
                     <button class="button duplicate-scan-button" type="button" :disabled="isScanningDuplicates" @click="scanDuplicates">
                         {{ isScanningDuplicates ? 'Scanning...' : 'Scan' }}
                     </button>
+                    <button class="button duplicate-scan-button button--ghost" type="button" :disabled="!isScanningDuplicates || isCancellingDuplicateScan || !duplicateTaskId" @click="cancelDuplicateScan">
+                        {{ isCancellingDuplicateScan ? 'Cancelling...' : 'Cancel' }}
+                    </button>
                 </div>
 
                 <div class="results duplicate-results duplicates-results">
@@ -180,6 +199,10 @@ export const DuplicatesView = {
                         <div class="meta-group">
                             <span class="status-dot" aria-hidden="true"></span>
                             <span>{{ duplicateStatusText }}</span>
+                        </div>
+                        <div v-if="duplicateTaskId" class="meta-group meta-group--subtle">
+                            <span>Task {{ duplicateTaskId.slice(0, 8) }}</span>
+                            <span v-if="duplicateTaskStatusText">{{ duplicateTaskStatusText }}</span>
                         </div>
                         <div class="meta-actions">
                             <div class="count-badge">
@@ -219,7 +242,7 @@ export const DuplicatesView = {
                             >
                                 {{ selectedCount > 1 ? 'Delete ' + selectedCount : 'Delete' }}
                             </button>
-                            <details v-if="selectedCount > 0 || duplicateGroups.length" class="action-menu">
+                            <details v-if="selectedCount > 0 || duplicateGroups.length" class="action-menu duplicates-action-menu">
                                 <summary>Tools</summary>
                                 <div class="action-menu-panel">
                                     <button v-if="selectedCount > 0" type="button" @click="copySelectedPaths">Copy Paths</button>
@@ -297,5 +320,5 @@ export const DuplicatesView = {
                 </div>
             </section>
         </div>
-    `,
+    `
 };

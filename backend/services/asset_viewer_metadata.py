@@ -296,7 +296,7 @@ def summarize_metadata(extension: str, path: str, image_module=None) -> dict[str
     ext = extension.lower()
     if ext == ".safetensors":
         metadata = _parse_safetensors_header(path)
-        summary = {
+        summary: dict[str, Any] = {
             "format": "safetensors",
             "keys": sorted([str(key) for key in metadata.keys()]),
         }
@@ -306,13 +306,13 @@ def summarize_metadata(extension: str, path: str, image_module=None) -> dict[str
 
     if ext == ".png":
         metadata = parse_png_metadata(path, image_module=image_module)
-        summary = {
+        png_summary: dict[str, Any] = {
             "format": "png",
             "keys": sorted([str(key) for key in metadata.keys()]),
         }
         if metadata:
-            summary["metadata"] = metadata
-        return summary
+            png_summary["metadata"] = metadata
+        return png_summary
 
     return {}
 

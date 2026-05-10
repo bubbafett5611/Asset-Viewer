@@ -1,56 +1,56 @@
 export const SettingsView = {
-    name: "SettingsView",
-    props: {
-        layoutStyle: {
-            type: Object,
-            required: true,
-        },
-        settingsSections: {
-            type: Array,
-            required: true,
-        },
-        settingsStatus: {
-            type: String,
-            required: true,
-        },
-        isSavingSettings: {
-            type: Boolean,
-            default: false,
-        },
-        settingsFieldValue: {
-            type: Function,
-            required: true,
-        },
-        settingsListValue: {
-            type: Function,
-            required: true,
-        },
-        settingsListDraftValue: {
-            type: Function,
-            required: true,
-        },
-        updateSettingsListDraft: {
-            type: Function,
-            required: true,
-        },
-        updateSetting: {
-            type: Function,
-            required: true,
-        },
-        updateStringListItem: {
-            type: Function,
-            required: true,
-        },
-        addStringListSetting: {
-            type: Function,
-            required: true,
-        },
-        removeStringListItem: {
-            type: Function,
-            required: true,
-        },
+  name: 'SettingsView',
+  props: {
+    layoutStyle: {
+      type: Object,
+      required: true
     },
-    template: `
+    settingsSections: {
+      type: Array,
+      required: true
+    },
+    settingsStatus: {
+      type: String,
+      required: true
+    },
+    isSavingSettings: {
+      type: Boolean,
+      default: false
+    },
+    settingsFieldValue: {
+      type: Function,
+      required: true
+    },
+    settingsListValue: {
+      type: Function,
+      required: true
+    },
+    settingsListDraftValue: {
+      type: Function,
+      required: true
+    },
+    updateSettingsListDraft: {
+      type: Function,
+      required: true
+    },
+    updateSetting: {
+      type: Function,
+      required: true
+    },
+    updateStringListItem: {
+      type: Function,
+      required: true
+    },
+    addStringListSetting: {
+      type: Function,
+      required: true
+    },
+    removeStringListItem: {
+      type: Function,
+      required: true
+    }
+  },
+  template: `
         <div class="layout layout--single layout--utility settings-layout tab-panel" :style="layoutStyle">
             <section class="panel settings-panel">
                 <div class="settings-header">
@@ -153,5 +153,5 @@ export const SettingsView = {
                 </div>
             </section>
         </div>
-    `,
+    `
 };

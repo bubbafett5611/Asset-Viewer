@@ -1,34 +1,34 @@
 export const TagRow = {
-    name: "TagRow",
-    props: {
-        tag: {
-            type: Object,
-            required: true,
-        },
-        active: {
-            type: Boolean,
-            default: false,
-        },
-        favorite: {
-            type: Boolean,
-            default: false,
-        },
+  name: 'TagRow',
+  props: {
+    tag: {
+      type: Object,
+      required: true
     },
-    emits: ["select", "toggle-favorite"],
-    methods: {
-        onKeydown(event) {
-            if (event.key !== "Enter" && event.key !== " ") {
-                return;
-            }
-            event.preventDefault();
-            this.$emit("select", this.tag);
-        },
-        onFavoriteClick(event) {
-            event.stopPropagation();
-            this.$emit("toggle-favorite", this.tag);
-        },
+    active: {
+      type: Boolean,
+      default: false
     },
-    template: `
+    favorite: {
+      type: Boolean,
+      default: false
+    }
+  },
+  emits: ['select', 'toggle-favorite'],
+  methods: {
+    onKeydown(event) {
+      if (event.key !== 'Enter' && event.key !== ' ') {
+        return;
+      }
+      event.preventDefault();
+      this.$emit('select', this.tag);
+    },
+    onFavoriteClick(event) {
+      event.stopPropagation();
+      this.$emit('toggle-favorite', this.tag);
+    }
+  },
+  template: `
         <div
             class="tag-row"
             :class="{ active }"
@@ -58,5 +58,5 @@ export const TagRow = {
             </div>
             <div class="tag-alias">{{ tag.aliases || 'No aliases' }}</div>
         </div>
-    `,
+    `
 };

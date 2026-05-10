@@ -1,48 +1,48 @@
-import { formatBytes, formatDate } from "/vue/formatters.js";
-import { thumbUrl } from "/vue/api.js";
+import { formatBytes, formatDate } from '/vue/formatters.js';
+import { thumbUrl } from '/vue/api.js';
 
 export const AssetCard = {
-    name: "AssetCard",
-    props: {
-        asset: {
-            type: Object,
-            required: true,
-        },
-        active: {
-            type: Boolean,
-            default: false,
-        },
-        selected: {
-            type: Boolean,
-            default: false,
-        },
-        blurEnabled: {
-            type: Boolean,
-            default: false,
-        },
+  name: 'AssetCard',
+  props: {
+    asset: {
+      type: Object,
+      required: true
     },
-    emits: ["select"],
-    setup() {
-        const previewableExtensions = new Set([".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"]);
-        const isPreviewable = (asset) => previewableExtensions.has(String(asset?.extension || "").toLowerCase());
-        const metadataBadges = (asset) => Array.isArray(asset?.metadata_badges) ? asset.metadata_badges : [];
-        const markThumbFailed = (event) => {
-            const thumb = event?.target?.closest?.(".asset-thumb");
-            if (thumb) {
-                thumb.classList.add("thumb-failed");
-            }
-        };
+    active: {
+      type: Boolean,
+      default: false
+    },
+    selected: {
+      type: Boolean,
+      default: false
+    },
+    blurEnabled: {
+      type: Boolean,
+      default: false
+    }
+  },
+  emits: ['select'],
+  setup() {
+    const previewableExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tif', '.tiff']);
+    const isPreviewable = (asset) => previewableExtensions.has(String(asset?.extension || '').toLowerCase());
+    const metadataBadges = (asset) => (Array.isArray(asset?.metadata_badges) ? asset.metadata_badges : []);
+    const markThumbFailed = (event) => {
+      const thumb = event?.target?.closest?.('.asset-thumb');
+      if (thumb) {
+        thumb.classList.add('thumb-failed');
+      }
+    };
 
-        return {
-            thumbUrl,
-            formatBytes,
-            formatDate,
-            isPreviewable,
-            metadataBadges,
-            markThumbFailed,
-        };
-    },
-    template: `
+    return {
+      thumbUrl,
+      formatBytes,
+      formatDate,
+      isPreviewable,
+      metadataBadges,
+      markThumbFailed
+    };
+  },
+  template: `
         <button
             class="asset-card"
             :class="{ active, 'is-selected': selected, 'is-blurred': blurEnabled }"
@@ -81,5 +81,5 @@ export const AssetCard = {
                 <span>{{ formatDate(asset.modified_ts) }}</span>
             </div>
         </button>
-    `,
+    `
 };

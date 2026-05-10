@@ -1,31 +1,45 @@
 from __future__ import annotations
 
-import importlib
-import json
 import mimetypes
 import os
-import queue
 import subprocess
 import sys
-import threading
 from io import BytesIO
 from pathlib import Path
-from typing import Any
 
+from asset_viewer import (
+    ALLOWED_UPLOAD_IMAGE_EXTENSIONS,
+    Image,
+    build_asset_item,
+    find_root_for_path,
+    folder_stats_report,
+    generate_thumbnail_bytes,
+    make_unique_destination_path,
+    metadata_health_report,
+    move_file_to_trash,
+    repair_png_bubba_metadata,
+    resolve_requested_file,
+    resolve_requested_root,
+    sanitize_upload_filename,
+    scan_assets,
+    scan_duplicate_assets,
+)
 from flask import Response, abort, jsonify, request, send_file, stream_with_context
 
-
-def _ctx():
-    # Resolve server module lazily to avoid import cycles and preserve monkeypatch behavior in tests.
-    return importlib.import_module("server")
+from services.app_context import _get_asset_roots_snapshot, logger
+from services.duplicate_scan_tasks import (
+    create_duplicate_scan_task,
+    get_duplicate_scan_task,
+    request_duplicate_scan_cancel,
+    stream_duplicate_scan_events,
+)
 
 
 def bubba_assets_upload_handler():
-    ctx = _ctx()
-    asset_roots = ctx._get_asset_roots_snapshot()
+    asset_roots = _get_asset_roots_snapshot()
     root_key = request.args.get('root')
     try:
-        dest_root = ctx.resolve_requested_root(root_key, asset_roots)
+        dest_root = resolve_requested_root(root_key, asset_roots)
     except Exception as e:
         abort(400, str(e))
 
@@ -35,41 +49,40 @@ def bubba_assets_upload_handler():
 
     for f in files:
         fname = getattr(f, 'filename', None) or 'upload.png'
-        filename = ctx.sanitize_upload_filename(fname)
+        filename = sanitize_upload_filename(fname)
         ext = Path(filename).suffix.lower()
-        if ext not in ctx.ALLOWED_UPLOAD_IMAGE_EXTENSIONS:
+        if ext not in ALLOWED_UPLOAD_IMAGE_EXTENSIONS:
             skipped.append({'filename': fname, 'error': f'Invalid extension: {ext}'})
-            ctx.logger.warning('Upload skipped invalid extension: %s', fname)
+            logger.warning('Upload skipped invalid extension: %s', fname)
             continue
 
         try:
             content = f.read()
-            if ctx.Image is not None:
+            if Image is not None:
                 try:
                     bio = BytesIO(content)
-                    img = ctx.Image.open(bio)
+                    img = Image.open(bio)
                     img.verify()
                 except Exception:
                     skipped.append({'filename': fname, 'error': 'Invalid image file'})
-                    ctx.logger.warning('Upload skipped invalid image: %s', fname)
+                    logger.warning('Upload skipped invalid image: %s', fname)
                     continue
 
-            dest_path = ctx.make_unique_destination_path(dest_root, filename)
+            dest_path = make_unique_destination_path(dest_root, filename)
             with open(dest_path, 'wb') as fh:
                 fh.write(content)
 
-            ctx.logger.info('Uploaded file: %s -> %s', filename, dest_path)
-            uploaded.append(ctx.build_asset_item(dest_path, dest_root))
+            logger.info('Uploaded file: %s -> %s', filename, dest_path)
+            uploaded.append(build_asset_item(dest_path, dest_root))
         except Exception as ex:
-            ctx.logger.exception('Upload failed for %s', fname)
+            logger.exception('Upload failed for %s', fname)
             skipped.append({'filename': fname, 'error': str(ex)})
 
     return jsonify({'uploaded': uploaded, 'skipped': skipped})
 
 
 def bubba_assets_delete_handler():
-    ctx = _ctx()
-    asset_roots = ctx._get_asset_roots_snapshot()
+    asset_roots = _get_asset_roots_snapshot()
     payload = request.get_json(silent=True) or {}
     paths: list[str] = []
     payload_paths = payload.get('paths')
@@ -88,36 +101,34 @@ def bubba_assets_delete_handler():
     errors = []
     for p in paths:
         try:
-            abs_path = ctx.resolve_requested_file(p, asset_roots)
-            root = ctx.find_root_for_path(abs_path, asset_roots)
+            abs_path = resolve_requested_file(p, asset_roots)
+            root = find_root_for_path(abs_path, asset_roots)
             if not root:
                 raise PermissionError('File not in allowed roots')
             if os.path.exists(abs_path):
                 if safe_delete:
-                    destination = ctx.move_file_to_trash(abs_path, root.path)
+                    destination = move_file_to_trash(abs_path, root.path)
                     moved.append({'path': p, 'destination': destination})
                 else:
                     os.remove(abs_path)
                 deleted.append(p)
-                ctx.logger.info('Deleted file: %s', abs_path)
+                logger.info('Deleted file: %s', abs_path)
             else:
                 errors.append({'path': p, 'error': 'File not found'})
         except Exception as e:
-            ctx.logger.exception('Delete failed for %s', p)
+            logger.exception('Delete failed for %s', p)
             errors.append({'path': p, 'error': str(e)})
 
     return jsonify({'deleted': deleted, 'moved': moved, 'safe_delete': safe_delete, 'errors': errors})
 
 
 def api_roots_handler():
-    ctx = _ctx()
-    asset_roots = ctx._get_asset_roots_snapshot()
+    asset_roots = _get_asset_roots_snapshot()
     return jsonify({'roots': [root.__dict__ for root in asset_roots]})
 
 
 def api_assets_list_handler():
-    ctx = _ctx()
-    asset_roots = ctx._get_asset_roots_snapshot()
+    asset_roots = _get_asset_roots_snapshot()
     root_key = request.args.get('root')
     q = request.args.get('q', '')
     ext = request.args.get('ext', '')
@@ -142,11 +153,11 @@ def api_assets_list_handler():
         abort(400, 'Invalid numeric filter')
 
     try:
-        root_path = ctx.resolve_requested_root(root_key, asset_roots)
+        root_path = resolve_requested_root(root_key, asset_roots)
     except Exception as e:
         abort(400, str(e))
 
-    assets = ctx.scan_assets(
+    assets = scan_assets(
         root=root_path,
         query=q,
         extensions=[ext] if ext else None,
@@ -165,8 +176,7 @@ def api_assets_list_handler():
 
 
 def api_assets_metadata_health_handler():
-    ctx = _ctx()
-    asset_roots = ctx._get_asset_roots_snapshot()
+    asset_roots = _get_asset_roots_snapshot()
     root_key = request.args.get('root')
     refresh = request.args.get('refresh', 'false').lower() == 'true'
     cache_only = request.args.get('cache_only', 'false').lower() == 'true'
@@ -175,30 +185,28 @@ def api_assets_metadata_health_handler():
     except ValueError:
         abort(400, 'Invalid metadata health parameter')
     try:
-        root_path = ctx.resolve_requested_root(root_key, asset_roots)
+        root_path = resolve_requested_root(root_key, asset_roots)
     except Exception as e:
         abort(400, str(e))
-    report, cached = ctx.metadata_health_report(root_path, limit=limit, refresh=refresh, cache_only=cache_only)
+    report, cached = metadata_health_report(root_path, limit=limit, refresh=refresh, cache_only=cache_only)
     return jsonify({'root': root_key, 'stats': report.model_dump(mode='json') if report else None, 'cached': cached})
 
 
 def api_assets_stats_handler():
-    ctx = _ctx()
-    asset_roots = ctx._get_asset_roots_snapshot()
+    asset_roots = _get_asset_roots_snapshot()
     root_key = request.args.get('root')
     refresh = request.args.get('refresh', 'false').lower() == 'true'
     cache_only = request.args.get('cache_only', 'false').lower() == 'true'
     try:
-        root_path = ctx.resolve_requested_root(root_key, asset_roots)
+        root_path = resolve_requested_root(root_key, asset_roots)
     except Exception as e:
         abort(400, str(e))
-    report, cached = ctx.folder_stats_report(root_path, refresh=refresh, cache_only=cache_only)
+    report, cached = folder_stats_report(root_path, refresh=refresh, cache_only=cache_only)
     return jsonify({'root': root_key, 'stats': report.model_dump(mode='json') if report else None, 'cached': cached})
 
 
 def api_assets_duplicates_handler():
-    ctx = _ctx()
-    asset_roots = ctx._get_asset_roots_snapshot()
+    asset_roots = _get_asset_roots_snapshot()
     root_key = request.args.get('root')
     include_near = request.args.get('include_near', 'false').lower() == 'true'
     try:
@@ -208,11 +216,11 @@ def api_assets_duplicates_handler():
         abort(400, 'Invalid duplicate scan parameter')
 
     try:
-        root_path = ctx.resolve_requested_root(root_key, asset_roots)
+        root_path = resolve_requested_root(root_key, asset_roots)
     except Exception as e:
         abort(400, str(e))
 
-    payload = ctx.scan_duplicate_assets(
+    payload = scan_duplicate_assets(
         root=root_path,
         include_near=include_near,
         near_threshold=near_threshold,
@@ -221,9 +229,22 @@ def api_assets_duplicates_handler():
     return jsonify({'root': root_key, **payload})
 
 
+def api_assets_duplicate_task_status_handler(task_id: str):
+    task = get_duplicate_scan_task(task_id)
+    if not task:
+        abort(404, 'Duplicate task not found')
+    return jsonify(task.snapshot())
+
+
+def api_assets_duplicate_task_cancel_handler(task_id: str):
+    task = request_duplicate_scan_cancel(task_id)
+    if not task:
+        abort(404, 'Duplicate task not found')
+    return jsonify(task.snapshot())
+
+
 def api_assets_duplicates_stream_handler():
-    ctx = _ctx()
-    asset_roots = ctx._get_asset_roots_snapshot()
+    asset_roots = _get_asset_roots_snapshot()
     root_key = request.args.get('root')
     include_near = request.args.get('include_near', 'false').lower() == 'true'
     try:
@@ -233,50 +254,27 @@ def api_assets_duplicates_stream_handler():
         abort(400, 'Invalid duplicate scan parameter')
 
     try:
-        root_path = ctx.resolve_requested_root(root_key, asset_roots)
+        root_path = resolve_requested_root(root_key, asset_roots)
     except Exception as e:
         abort(400, str(e))
 
-    events: queue.Queue[dict[str, Any]] = queue.Queue()
-
-    def progress_callback(progress: dict[str, Any]) -> None:
-        events.put({'type': 'progress', 'progress': progress})
-
-    def worker() -> None:
-        try:
-            payload = ctx.scan_duplicate_assets(
-                root=root_path,
-                include_near=include_near,
-                near_threshold=near_threshold,
-                limit=limit,
-                progress_callback=progress_callback,
-            )
-            events.put({'type': 'result', 'root': root_key, **payload})
-        except Exception as exc:
-            ctx.logger.exception('Duplicate scan failed')
-            events.put({'type': 'error', 'error': str(exc)})
-        finally:
-            events.put({'type': 'done'})
-
-    threading.Thread(target=worker, daemon=True).start()
-
-    @stream_with_context
-    def generate():
-        while True:
-            event = events.get()
-            yield json.dumps(event) + "\n"
-            if event.get('type') == 'done':
-                break
-
-    return Response(generate(), mimetype='application/x-ndjson')  # type: ignore[call-arg]
+    task = create_duplicate_scan_task(
+        root=root_path,
+        include_near=include_near,
+        near_threshold=near_threshold,
+        limit=limit,
+    )
+    event_stream = stream_with_context(
+        stream_duplicate_scan_events(task, scan_duplicate_assets, logger, root_key=root_key)
+    )
+    return Response(event_stream, mimetype='application/x-ndjson')
 
 
 def api_assets_file_handler():
-    ctx = _ctx()
-    asset_roots = ctx._get_asset_roots_snapshot()
+    asset_roots = _get_asset_roots_snapshot()
     path = request.args.get('path')
     try:
-        abs_path = ctx.resolve_requested_file(path, asset_roots)
+        abs_path = resolve_requested_file(path, asset_roots)
     except Exception as e:
         abort(400, str(e))
     mime, _ = mimetypes.guess_type(abs_path)
@@ -284,15 +282,14 @@ def api_assets_file_handler():
 
 
 def api_assets_thumb_handler():
-    ctx = _ctx()
-    asset_roots = ctx._get_asset_roots_snapshot()
+    asset_roots = _get_asset_roots_snapshot()
     path = request.args.get('path')
     size = int(request.args.get('size', 256))
     try:
-        abs_path = ctx.resolve_requested_file(path, asset_roots)
+        abs_path = resolve_requested_file(path, asset_roots)
     except Exception as e:
         abort(400, str(e))
-    thumb = ctx.generate_thumbnail_bytes(abs_path, max_size=size)
+    thumb = generate_thumbnail_bytes(abs_path, max_size=size)
     if not thumb:
         abort(404, 'Could not generate thumbnail')
     return send_file(
@@ -304,45 +301,42 @@ def api_assets_thumb_handler():
 
 
 def api_assets_details_handler():
-    ctx = _ctx()
-    asset_roots = ctx._get_asset_roots_snapshot()
+    asset_roots = _get_asset_roots_snapshot()
     path = request.args.get('path')
     try:
-        abs_path = ctx.resolve_requested_file(path, asset_roots)
-        root = ctx.find_root_for_path(abs_path, asset_roots)
+        abs_path = resolve_requested_file(path, asset_roots)
+        root = find_root_for_path(abs_path, asset_roots)
         if not root:
             abort(400, 'File not in allowed roots')
-        item = ctx.build_asset_item(abs_path, root.path, include_metadata=True)
+        item = build_asset_item(abs_path, root.path, include_metadata=True)
     except Exception as e:
         abort(400, str(e))
     return jsonify({'asset': item})
 
 
 def api_assets_repair_metadata_handler():
-    ctx = _ctx()
-    asset_roots = ctx._get_asset_roots_snapshot()
+    asset_roots = _get_asset_roots_snapshot()
     payload = request.get_json(silent=True) or {}
     path = payload.get('path')
     overwrite = payload.get('overwrite', False) is True
     try:
-        abs_path = ctx.resolve_requested_file(path, asset_roots)
-        root = ctx.find_root_for_path(abs_path, asset_roots)
+        abs_path = resolve_requested_file(path, asset_roots)
+        root = find_root_for_path(abs_path, asset_roots)
         if not root:
             raise PermissionError('File not in allowed roots')
-        result = ctx.repair_png_bubba_metadata(abs_path, overwrite=overwrite)
-        item = ctx.build_asset_item(abs_path, root.path, include_metadata=True)
+        result = repair_png_bubba_metadata(abs_path, overwrite=overwrite)
+        item = build_asset_item(abs_path, root.path, include_metadata=True)
     except Exception as e:
         abort(400, str(e))
     return jsonify({'result': result, 'asset': item})
 
 
 def api_assets_open_folder_handler():
-    ctx = _ctx()
-    asset_roots = ctx._get_asset_roots_snapshot()
+    asset_roots = _get_asset_roots_snapshot()
     payload = request.get_json(silent=True) or {}
     path = payload.get('path')
     try:
-        abs_path = ctx.resolve_requested_file(path, asset_roots)
+        abs_path = resolve_requested_file(path, asset_roots)
     except Exception as e:
         abort(400, str(e))
 
@@ -355,6 +349,6 @@ def api_assets_open_folder_handler():
         else:
             subprocess.Popen(['xdg-open', folder])
     except Exception as e:
-        ctx.logger.exception('Open folder failed for %s', folder)
+        logger.exception('Open folder failed for %s', folder)
         abort(500, str(e))
     return jsonify({'opened': folder})

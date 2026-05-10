@@ -26,7 +26,7 @@ def discover_asset_roots(logger: logging.Logger) -> list[tuple[str, str, str]]:
     seen: set[str] = set()
 
     try:
-        import folder_paths  # type: ignore
+        import folder_paths
     except Exception as error:
         logger.info("Could not import folder_paths: %s", error)
         folder_paths = None

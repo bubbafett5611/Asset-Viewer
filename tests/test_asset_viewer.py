@@ -14,7 +14,11 @@ from PIL.PngImagePlugin import PngInfo
 sys.path.insert(0, "backend")
 
 import server  # noqa: E402
+from services import app_context  # noqa: E402
+from services import asset_api  # noqa: E402
+from services import tag_api  # noqa: E402
 from asset_viewer import AssetRoot  # noqa: E402
+from settings_model import Settings  # noqa: E402
 
 
 @pytest.fixture()
@@ -22,7 +26,7 @@ def asset_root(tmp_path, monkeypatch):
     root = tmp_path / "assets"
     root.mkdir()
     monkeypatch.setattr(
-        server,
+        app_context,
         "ASSET_ROOTS",
         [AssetRoot(key="test", label="Test Assets", path=str(root))],
     )
@@ -134,8 +138,8 @@ def test_roots_uses_configured_asset_roots(client):
 def test_settings_api_loads_and_saves_nested_model(client, tmp_path, monkeypatch):
     settings_file = tmp_path / "settings.json"
     settings_file.write_text('{"general": {"asset_roots": ["C:/Assets"]}, "viewer": {"density": "large", "preview": true}}', encoding="utf-8")
-    monkeypatch.setattr(server, "SETTINGS_FILE", settings_file)
-    monkeypatch.setitem(server.Settings.model_config, "json_file", settings_file)
+    monkeypatch.setattr(app_context, "SETTINGS_FILE", settings_file)
+    monkeypatch.setitem(Settings.model_config, "json_file", settings_file)
 
     response = client.get("/api/settings")
 
@@ -173,18 +177,18 @@ def test_settings_updates_do_not_break_active_asset_requests(asset_root, tmp_pat
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(server, "SETTINGS_FILE", settings_file)
-    monkeypatch.setitem(server.Settings.model_config, "json_file", settings_file)
+    monkeypatch.setattr(app_context, "SETTINGS_FILE", settings_file)
+    monkeypatch.setitem(Settings.model_config, "json_file", settings_file)
 
     (asset_root / "concurrent.png").write_bytes(make_png_bytes().getvalue())
 
-    original_scan_assets = server.scan_assets
+    original_scan_assets = asset_api.scan_assets
 
     def delayed_scan_assets(*args, **kwargs):
         time.sleep(0.01)
         return original_scan_assets(*args, **kwargs)
 
-    monkeypatch.setattr(server, "scan_assets", delayed_scan_assets)
+    monkeypatch.setattr(asset_api, "scan_assets", delayed_scan_assets)
 
     failures: list[str] = []
 
@@ -480,9 +484,79 @@ def test_duplicate_scan_stream_reports_progress_and_result(client, asset_root):
 
     assert response.status_code == 200
     body = response.get_data(as_text=True)
+    assert '"type": "task"' in body
     assert '"type": "progress"' in body
     assert '"type": "result"' in body
     assert '"exact_groups": 1' in body
+
+
+def test_duplicate_scan_task_status_reports_completion(client, asset_root):
+    exact_bytes = make_png_bytes((255, 0, 0, 255)).getvalue()
+    (asset_root / "status-a.png").write_bytes(exact_bytes)
+    (asset_root / "status-b.png").write_bytes(exact_bytes)
+
+    response = client.get("/api/assets/duplicates/stream?root=test", buffered=False)
+    first_chunk = next(response.response).decode("utf-8")
+    task_payload = json.loads(first_chunk)
+    task_id = task_payload["task"]["task_id"]
+
+    body = b"".join(response.response).decode("utf-8")
+    assert '"type": "result"' in body
+
+    status_response = client.get(f"/api/assets/duplicates/tasks/{task_id}")
+
+    assert status_response.status_code == 200
+    status_payload = status_response.get_json()
+    assert status_payload["task_id"] == task_id
+    assert status_payload["status"] == "completed"
+    assert status_payload["result"]["summary"]["exact_groups"] == 1
+
+
+def test_duplicate_scan_task_cancel_endpoint_stops_running_scan(client, asset_root, monkeypatch):
+    (asset_root / "cancel-a.png").write_bytes(make_png_bytes().getvalue())
+    (asset_root / "cancel-b.png").write_bytes(make_png_bytes().getvalue())
+
+    from services.duplicate_scan_tasks import DuplicateScanCancelled
+
+    def slow_scan_duplicate_assets(*args, **kwargs):
+        progress_callback = kwargs.get("progress_callback")
+        cancel_check = kwargs.get("cancel_check")
+        for index in range(100):
+            if cancel_check and cancel_check():
+                raise DuplicateScanCancelled("cancelled")
+            if progress_callback:
+                progress_callback({"stage": "hashing", "completed": index, "total": 100, "percent": index, "message": f"step {index}"})
+            time.sleep(0.01)
+        return {
+            "groups": [],
+            "summary": {
+                "groups": 0,
+                "assets": 0,
+                "exact_groups": 0,
+                "pixel_groups": 0,
+                "near_groups": 0,
+                "scanned_assets": 0,
+                "near_enabled": False,
+            },
+        }
+
+    monkeypatch.setattr(asset_api, "scan_duplicate_assets", slow_scan_duplicate_assets)
+
+    response = client.get("/api/assets/duplicates/stream?root=test", buffered=False)
+    first_chunk = next(response.response).decode("utf-8")
+    task_payload = json.loads(first_chunk)
+    task_id = task_payload["task"]["task_id"]
+
+    cancel_response = client.post(f"/api/assets/duplicates/tasks/{task_id}/cancel")
+    assert cancel_response.status_code == 200
+    assert cancel_response.get_json()["cancel_requested"] is True
+
+    body = b"".join(response.response).decode("utf-8")
+    assert '"type": "cancelled"' in body or '"type": "error"' in body
+
+    status_response = client.get(f"/api/assets/duplicates/tasks/{task_id}")
+    assert status_response.status_code == 200
+    assert status_response.get_json()["status"] == "cancelled"
 
 
 def test_details_and_thumbnail_for_image(client, asset_root):
@@ -610,7 +684,7 @@ def test_tags_are_paged_and_search_normalizes_spaces(tmp_path, monkeypatch):
         "solo,0,99,alone\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(server, "TAG_LIST_LOCAL", tag_csv)
+    monkeypatch.setattr(tag_api, "TAG_LIST_LOCAL", tag_csv)
     server.app.config.update(TESTING=True)
 
     with server.app.test_client() as test_client:

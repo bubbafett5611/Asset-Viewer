@@ -1,95 +1,95 @@
-import { TagRow } from "/vue/components/TagRow.js";
-import { TagDetailsPanel } from "/vue/components/TagDetailsPanel.js";
+import { TagRow } from '/vue/components/TagRow.js';
+import { TagDetailsPanel } from '/vue/components/TagDetailsPanel.js';
 
 export const TagsView = {
-    name: "TagsView",
-    components: {
-        TagRow,
-        TagDetailsPanel,
+  name: 'TagsView',
+  components: {
+    TagRow,
+    TagDetailsPanel
+  },
+  props: {
+    layoutStyle: {
+      type: Object,
+      required: true
     },
-    props: {
-        layoutStyle: {
-            type: Object,
-            required: true,
-        },
-        tagFilters: {
-            type: Object,
-            required: true,
-        },
-        tagCategories: {
-            type: Array,
-            required: true,
-        },
-        tagStatusText: {
-            type: String,
-            required: true,
-        },
-        tagCountText: {
-            type: String,
-            required: true,
-        },
-        visibleTags: {
-            type: Array,
-            required: true,
-        },
-        selectedTag: {
-            type: Object,
-            default: null,
-        },
-        selectedTagAliases: {
-            type: Array,
-            required: true,
-        },
-        selectedTagExamples: {
-            type: Array,
-            required: true,
-        },
-        tagExamplesLoading: {
-            type: Boolean,
-            default: false,
-        },
-        isLoadingTags: {
-            type: Boolean,
-            default: false,
-        },
-        tagHasMore: {
-            type: Boolean,
-            default: false,
-        },
-        isTagFavorite: {
-            type: Function,
-            required: true,
-        },
-        fetchTags: {
-            type: Function,
-            required: true,
-        },
-        selectTag: {
-            type: Function,
-            required: true,
-        },
-        toggleTagFavorite: {
-            type: Function,
-            required: true,
-        },
-        loadMoreTags: {
-            type: Function,
-            required: true,
-        },
-        exampleImageUrl: {
-            type: Function,
-            required: true,
-        },
-        tagSearchUrl: {
-            type: Function,
-            required: true,
-        },
-        startDetailsResize: {
-            type: Function,
-            required: true,
-        },
+    tagFilters: {
+      type: Object,
+      required: true
     },
-    template: `
+    tagCategories: {
+      type: Array,
+      required: true
+    },
+    tagStatusText: {
+      type: String,
+      required: true
+    },
+    tagCountText: {
+      type: String,
+      required: true
+    },
+    visibleTags: {
+      type: Array,
+      required: true
+    },
+    selectedTag: {
+      type: Object,
+      default: null
+    },
+    selectedTagAliases: {
+      type: Array,
+      required: true
+    },
+    selectedTagExamples: {
+      type: Array,
+      required: true
+    },
+    tagExamplesLoading: {
+      type: Boolean,
+      default: false
+    },
+    isLoadingTags: {
+      type: Boolean,
+      default: false
+    },
+    tagHasMore: {
+      type: Boolean,
+      default: false
+    },
+    isTagFavorite: {
+      type: Function,
+      required: true
+    },
+    fetchTags: {
+      type: Function,
+      required: true
+    },
+    selectTag: {
+      type: Function,
+      required: true
+    },
+    toggleTagFavorite: {
+      type: Function,
+      required: true
+    },
+    loadMoreTags: {
+      type: Function,
+      required: true
+    },
+    exampleImageUrl: {
+      type: Function,
+      required: true
+    },
+    tagSearchUrl: {
+      type: Function,
+      required: true
+    },
+    startDetailsResize: {
+      type: Function,
+      required: true
+    }
+  },
+  template: `
         <div class="layout tags-layout tab-panel" :style="layoutStyle">
             <section class="panel tags-panel">
                 <div class="controls tag-controls">
@@ -166,5 +166,5 @@ export const TagsView = {
                 @toggle-favorite="toggleTagFavorite"
             />
         </div>
-    `,
+    `
 };

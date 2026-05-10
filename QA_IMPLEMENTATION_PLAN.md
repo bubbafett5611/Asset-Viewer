@@ -7,6 +7,24 @@ Source: QA_REVIEW.md
 
 Reduce long-term maintenance risk by decomposing large backend/frontend modules, removing import-time side effects, tightening engineering quality gates, and improving scalability.
 
+## Current Status Snapshot
+
+Verified complete:
+- Phase 1 tooling and guardrails.
+- Most of Phase 0 safety work.
+- Phase 2 backend app boundary split (including dedicated duplicates blueprint registration).
+- Phase 6 CSS ownership cleanup for action menus/load-more/button focus selectors.
+- Phase 7 background duplicate task architecture (task lifecycle, status, cancellation, frontend task-aware flow).
+- Cross-cutting Vue dependency hardening (vendored local Vue ESM build).
+
+Partially complete:
+- Phase 3: composables were split out, but `frontend/vue/useAssetViewer.js` still owns a large watcher-driven orchestration layer.
+- Phase 4: backend services were extracted, but broad catch-all handling and service-level test granularity still need cleanup.
+- Phase 5: view components were split, but several views are still mostly prop-forwarding shells.
+
+Still pending:
+- Additional decomposition work in Phase 3 through Phase 5.
+
 ## Estimation Model
 
 - Unit: engineering days (1 engineer, focused implementation)
