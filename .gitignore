@@ -55,3 +55,4 @@ node_modules/
 
 # Local test scratch directory used by CI/check commands
 .pytest_tmp/
+settings.json

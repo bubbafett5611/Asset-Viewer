@@ -7,6 +7,6 @@
   },
   "viewer": {
     "density": "large",
-    "preview": false
+    "preview": true
   }
 }
