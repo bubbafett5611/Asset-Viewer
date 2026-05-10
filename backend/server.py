@@ -7,10 +7,8 @@ import re
 from bs4 import BeautifulSoup
 from urllib.parse import quote_plus, urlparse
 import logging
-import queue
 import threading
 import time
-from io import BytesIO
 from typing import Optional, Dict, Any, Tuple, List
 
 TAG_LIST_DIR_URL = "https://github.com/DraconicDragon/dbr-e621-lists-archive/tree/main/tag-lists/danbooru_e621_merged"
@@ -262,39 +260,34 @@ def _ensure_tag_list_available():
         logger.exception('Failed to ensure local tag list is available')
         return jsonify({'error': f'Failed to prepare tag list: {exc}'}), 503
 
-from flask import Flask, jsonify, send_file, request, abort, stream_with_context
+from flask import Flask, jsonify, send_file, request, abort
 from pathlib import Path
 import os
-import mimetypes
-import subprocess
-import sys
-
-import json
-from asset_viewer import (
-    resolve_requested_root,
-    scan_assets,
-    scan_duplicate_assets,
-    metadata_health_report,
-    folder_stats_report,
-    repair_png_bubba_metadata,
-    build_asset_item,
-    generate_thumbnail_bytes,
-    resolve_requested_file,
-    find_root_for_path,
-    AssetRoot,
-    make_unique_destination_path,
-    move_file_to_trash,
-    sanitize_upload_filename,
-    ALLOWED_UPLOAD_IMAGE_EXTENSIONS,
-    Image,
-)
+from services import asset_api
+import asset_viewer as _asset_viewer
 from settings_model import (
     Settings,
     save_settings,
     validate_settings_payload,
 )
 
-app = Flask(__name__)
+# Compatibility exports for service-context lookups and tests that monkeypatch server.* symbols.
+resolve_requested_root = _asset_viewer.resolve_requested_root
+scan_assets = _asset_viewer.scan_assets
+scan_duplicate_assets = _asset_viewer.scan_duplicate_assets
+metadata_health_report = _asset_viewer.metadata_health_report
+folder_stats_report = _asset_viewer.folder_stats_report
+repair_png_bubba_metadata = _asset_viewer.repair_png_bubba_metadata
+build_asset_item = _asset_viewer.build_asset_item
+generate_thumbnail_bytes = _asset_viewer.generate_thumbnail_bytes
+resolve_requested_file = _asset_viewer.resolve_requested_file
+find_root_for_path = _asset_viewer.find_root_for_path
+AssetRoot = _asset_viewer.AssetRoot
+make_unique_destination_path = _asset_viewer.make_unique_destination_path
+move_file_to_trash = _asset_viewer.move_file_to_trash
+sanitize_upload_filename = _asset_viewer.sanitize_upload_filename
+ALLOWED_UPLOAD_IMAGE_EXTENSIONS = _asset_viewer.ALLOWED_UPLOAD_IMAGE_EXTENSIONS
+Image = _asset_viewer.Image
 
 # Basic logging for uploads/deletes and troubleshooting
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s in %(module)s: %(message)s')
@@ -362,7 +355,6 @@ def _cache_set_image(url: str, data: bytes, content_type: str):
                 del _image_cache[k]
 
 
-@app.after_request
 def _add_cors_headers(response):
     # Allow local development cross-origin requests
     response.headers['Access-Control-Allow-Origin'] = '*'
@@ -370,120 +362,32 @@ def _add_cors_headers(response):
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization'
     return response
 
-@app.route('/bubba/assets/roots', methods=['GET'])
 def bubba_assets_roots():
     return api_roots()
 
-@app.route('/bubba/assets/list', methods=['GET'])
 def bubba_assets_list():
     return api_assets_list()
 
 # Forwarding wrappers so frontend paths (/bubba/assets/*) work as expected
-@app.route('/bubba/assets/file', methods=['GET'])
 def bubba_assets_file():
     return api_assets_file()
 
 
-@app.route('/bubba/assets/thumb', methods=['GET'])
 def bubba_assets_thumb():
     return api_assets_thumb()
 
 
-@app.route('/bubba/assets/details', methods=['GET'])
 def bubba_assets_details():
     return api_assets_details()
 
 
-@app.route('/bubba/assets/upload', methods=['POST'])
 def bubba_assets_upload():
-    asset_roots = _get_asset_roots_snapshot()
-    root_key = request.args.get('root')
-    try:
-        dest_root = resolve_requested_root(root_key, asset_roots)
-    except Exception as e:
-        abort(400, str(e))
-
-    files = request.files.getlist('files') if hasattr(request, 'files') else []
-    uploaded = []
-    skipped = []
-
-    for f in files:
-        fname = getattr(f, 'filename', None) or 'upload.png'
-        filename = sanitize_upload_filename(fname)
-        ext = Path(filename).suffix.lower()
-        if ext not in ALLOWED_UPLOAD_IMAGE_EXTENSIONS:
-            skipped.append({'filename': fname, 'error': f'Invalid extension: {ext}'})
-            logger.warning('Upload skipped invalid extension: %s', fname)
-            continue
-
-        try:
-            content = f.read()
-            # Basic image validation using Pillow when available
-            if Image is not None:
-                try:
-                    bio = BytesIO(content)
-                    img = Image.open(bio)
-                    img.verify()
-                except Exception:
-                    skipped.append({'filename': fname, 'error': 'Invalid image file'})
-                    logger.warning('Upload skipped invalid image: %s', fname)
-                    continue
-
-            dest_path = make_unique_destination_path(dest_root, filename)
-            with open(dest_path, 'wb') as fh:
-                fh.write(content)
-
-            logger.info('Uploaded file: %s -> %s', filename, dest_path)
-            uploaded.append(build_asset_item(dest_path, dest_root))
-        except Exception as ex:
-            logger.exception('Upload failed for %s', fname)
-            skipped.append({'filename': fname, 'error': str(ex)})
-
-    return jsonify({'uploaded': uploaded, 'skipped': skipped})
+    return asset_api.bubba_assets_upload_handler()
 
 
-@app.route('/bubba/assets/delete', methods=['POST'])
 def bubba_assets_delete():
-    asset_roots = _get_asset_roots_snapshot()
-    payload = request.get_json(silent=True) or {}
-    paths: list[str] = []
-    payload_paths = payload.get('paths')
-    payload_path = payload.get('path')
-    if isinstance(payload_paths, list):
-        paths = [item for item in payload_paths if isinstance(item, str)]
-    elif isinstance(payload_path, str):
-        paths = [payload_path]
+    return asset_api.bubba_assets_delete_handler()
 
-    if not paths:
-        abort(400, 'No paths provided')
-    safe_delete = payload.get('safe_delete', True) is not False
-
-    deleted = []
-    moved = []
-    errors = []
-    for p in paths:
-        try:
-            abs_path = resolve_requested_file(p, asset_roots)
-            root = find_root_for_path(abs_path, asset_roots)
-            if not root:
-                raise PermissionError('File not in allowed roots')
-            if os.path.exists(abs_path):
-                if safe_delete:
-                    destination = move_file_to_trash(abs_path, root.path)
-                    moved.append({'path': p, 'destination': destination})
-                else:
-                    os.remove(abs_path)
-                deleted.append(p)
-                logger.info('Deleted file: %s', abs_path)
-            else:
-                errors.append({'path': p, 'error': 'File not found'})
-        except Exception as e:
-            logger.exception('Delete failed for %s', p)
-            errors.append({'path': p, 'error': str(e)})
-
-    return jsonify({'deleted': deleted, 'moved': moved, 'safe_delete': safe_delete, 'errors': errors})
-
-@app.route('/')
 def index():
     frontend_root = Path(__file__).parent.parent / 'frontend'
     frontend_path = frontend_root / 'asset_viewer_vue.html'
@@ -492,7 +396,6 @@ def index():
     return send_file(frontend_path)
 
 
-@app.route('/asset_viewer.css')
 def asset_viewer_css():
     css_path = Path(__file__).parent.parent / 'frontend' / 'asset_viewer.css'
     if not css_path.exists():
@@ -500,7 +403,6 @@ def asset_viewer_css():
     return send_file(css_path, mimetype='text/css')
 
 
-@app.route('/styles/<path:filename>')
 def asset_viewer_style_file(filename):
     styles_root = (Path(__file__).parent.parent / 'frontend' / 'styles').resolve()
     requested = (styles_root / filename).resolve()
@@ -511,7 +413,6 @@ def asset_viewer_style_file(filename):
     return send_file(requested, mimetype='text/css')
 
 
-@app.route('/asset_viewer_vue.js')
 def asset_viewer_vue_js():
     js_path = Path(__file__).parent.parent / 'frontend' / 'asset_viewer_vue.js'
     if not js_path.exists():
@@ -519,7 +420,6 @@ def asset_viewer_vue_js():
     return send_file(js_path, mimetype='application/javascript')
 
 
-@app.route('/vue/<path:filename>')
 def asset_viewer_vue_module(filename):
     vue_root = (Path(__file__).parent.parent / 'frontend' / 'vue').resolve()
     requested = (vue_root / filename).resolve()
@@ -529,14 +429,12 @@ def asset_viewer_vue_module(filename):
         return '', 404
     return send_file(requested, mimetype='application/javascript')
 
-@app.route('/danbooru_e621_merged.csv')
 def serve_tag_csv():
     failure = _ensure_tag_list_available()
     if failure is not None:
         return failure
     return send_file(TAG_LIST_LOCAL, mimetype='text/csv')
 
-@app.route('/api/tags', methods=['GET'])
 def api_tags():
     failure = _ensure_tag_list_available()
     if failure is not None:
@@ -580,7 +478,6 @@ def api_tags():
         'categories': sorted([value for value in categories if value]),
     })
 
-@app.route('/bubba/tag_examples')
 def bubba_tag_examples():
     tag = request.args.get('tag', '').strip()
     if not tag:
@@ -699,7 +596,6 @@ def bubba_tag_examples():
         pass
     return jsonify({'examples': examples})
 
-@app.route('/bubba/tag_example_image')
 def bubba_tag_example_image():
     url = request.args.get('url', '').strip()
     if not url:
@@ -764,7 +660,6 @@ def _set_asset_roots(new_roots: list[AssetRoot]) -> None:
         ASSET_ROOTS = list(new_roots)
 
 
-@app.route('/api/settings', methods=['GET'])
 def api_settings():
     settings = Settings()
     return jsonify({
@@ -773,7 +668,6 @@ def api_settings():
     })
 
 
-@app.route('/api/settings', methods=['PUT'])
 def api_update_settings():
     payload = request.get_json(silent=True) or {}
     try:
@@ -789,258 +683,63 @@ def api_update_settings():
         'roots': [root.__dict__ for root in updated_roots],
     })
 
-@app.route('/api/roots', methods=['GET'])
 def api_roots():
-    asset_roots = _get_asset_roots_snapshot()
-    return jsonify({
-        'roots': [root.__dict__ for root in asset_roots]
-    })
+    return asset_api.api_roots_handler()
 
-@app.route('/api/assets/list', methods=['GET'])
 def api_assets_list():
-    asset_roots = _get_asset_roots_snapshot()
-    root_key = request.args.get('root')
-    q = request.args.get('q', '')
-    ext = request.args.get('ext', '')
-    try:
-        limit = int(request.args.get('limit', 100))
-        offset = int(request.args.get('offset', 0))
-    except ValueError:
-        abort(400, 'Invalid pagination parameter')
-    include_metadata = request.args.get('include_metadata', 'false').lower() == 'true'
-    sort_by = request.args.get('sort_by', 'modified')
-    sort_dir = request.args.get('sort_dir', 'desc')
-    min_size_bytes = request.args.get('min_size_bytes')
-    max_size_bytes = request.args.get('max_size_bytes')
-    modified_after_ts = request.args.get('modified_after_ts')
-    metadata_mode = request.args.get('metadata_mode', 'all')
-    metadata_badges = [
-        item.strip()
-        for item in request.args.get('metadata_badges', '').split(',')
-        if item.strip()
-    ]
-    try:
-        min_size_filter = int(min_size_bytes) if min_size_bytes else None
-        max_size_filter = int(max_size_bytes) if max_size_bytes else None
-        modified_after_filter = float(modified_after_ts) if modified_after_ts else None
-    except ValueError:
-        abort(400, 'Invalid numeric filter')
-
-    try:
-        root_path = resolve_requested_root(root_key, asset_roots)
-    except Exception as e:
-        abort(400, str(e))
-
-    assets = scan_assets(
-        root=root_path,
-        query=q,
-        extensions=[ext] if ext else None,
-        limit=limit,
-        include_metadata=include_metadata,
-        offset=offset,
-        sort_by=sort_by,
-        sort_dir=sort_dir,
-        min_size_bytes=min_size_filter,
-        max_size_bytes=max_size_filter,
-        modified_after_ts=modified_after_filter,
-        metadata_mode=metadata_mode,
-        metadata_badge_filter=metadata_badges,
-    )
-    return jsonify({'assets': assets, 'root': root_key})
+    return asset_api.api_assets_list_handler()
 
 
-@app.route('/api/assets/metadata/health', methods=['GET'])
 def api_assets_metadata_health():
-    asset_roots = _get_asset_roots_snapshot()
-    root_key = request.args.get('root')
-    refresh = request.args.get('refresh', 'false').lower() == 'true'
-    cache_only = request.args.get('cache_only', 'false').lower() == 'true'
-    try:
-        limit = int(request.args.get('limit', 10000))
-    except ValueError:
-        abort(400, 'Invalid metadata health parameter')
-    try:
-        root_path = resolve_requested_root(root_key, asset_roots)
-    except Exception as e:
-        abort(400, str(e))
-    report, cached = metadata_health_report(root_path, limit=limit, refresh=refresh, cache_only=cache_only)
-    return jsonify({'root': root_key, 'stats': report.model_dump(mode='json') if report else None, 'cached': cached})
+    return asset_api.api_assets_metadata_health_handler()
 
 
-@app.route('/api/assets/stats', methods=['GET'])
 def api_assets_stats():
-    asset_roots = _get_asset_roots_snapshot()
-    root_key = request.args.get('root')
-    refresh = request.args.get('refresh', 'false').lower() == 'true'
-    cache_only = request.args.get('cache_only', 'false').lower() == 'true'
-    try:
-        root_path = resolve_requested_root(root_key, asset_roots)
-    except Exception as e:
-        abort(400, str(e))
-    report, cached = folder_stats_report(root_path, refresh=refresh, cache_only=cache_only)
-    return jsonify({'root': root_key, 'stats': report.model_dump(mode='json') if report else None, 'cached': cached})
+    return asset_api.api_assets_stats_handler()
 
 
-@app.route('/api/assets/duplicates', methods=['GET'])
 def api_assets_duplicates():
-    asset_roots = _get_asset_roots_snapshot()
-    root_key = request.args.get('root')
-    include_near = request.args.get('include_near', 'false').lower() == 'true'
-    try:
-        near_threshold = int(request.args.get('near_threshold', 6))
-        limit = int(request.args.get('limit', 5000))
-    except ValueError:
-        abort(400, 'Invalid duplicate scan parameter')
-
-    try:
-        root_path = resolve_requested_root(root_key, asset_roots)
-    except Exception as e:
-        abort(400, str(e))
-
-    payload = scan_duplicate_assets(
-        root=root_path,
-        include_near=include_near,
-        near_threshold=near_threshold,
-        limit=limit,
-    )
-    return jsonify({'root': root_key, **payload})
+    return asset_api.api_assets_duplicates_handler()
 
 
-@app.route('/api/assets/duplicates/stream', methods=['GET'])
 def api_assets_duplicates_stream():
-    asset_roots = _get_asset_roots_snapshot()
-    root_key = request.args.get('root')
-    include_near = request.args.get('include_near', 'false').lower() == 'true'
-    try:
-        near_threshold = int(request.args.get('near_threshold', 6))
-        limit = int(request.args.get('limit', 5000))
-    except ValueError:
-        abort(400, 'Invalid duplicate scan parameter')
+    return asset_api.api_assets_duplicates_stream_handler()
 
-    try:
-        root_path = resolve_requested_root(root_key, asset_roots)
-    except Exception as e:
-        abort(400, str(e))
-
-    events: queue.Queue[dict[str, Any]] = queue.Queue()
-
-    def progress_callback(progress: dict[str, Any]) -> None:
-        events.put({'type': 'progress', 'progress': progress})
-
-    def worker() -> None:
-        try:
-            payload = scan_duplicate_assets(
-                root=root_path,
-                include_near=include_near,
-                near_threshold=near_threshold,
-                limit=limit,
-                progress_callback=progress_callback,
-            )
-            events.put({'type': 'result', 'root': root_key, **payload})
-        except Exception as exc:
-            logger.exception('Duplicate scan failed')
-            events.put({'type': 'error', 'error': str(exc)})
-        finally:
-            events.put({'type': 'done'})
-
-    threading.Thread(target=worker, daemon=True).start()
-
-    @stream_with_context
-    def generate():
-        while True:
-            event = events.get()
-            yield json.dumps(event) + "\n"
-            if event.get('type') == 'done':
-                break
-
-    return Response(generate(), mimetype='application/x-ndjson')  # type: ignore[call-arg]
-
-@app.route('/api/assets/file', methods=['GET'])
 def api_assets_file():
-    asset_roots = _get_asset_roots_snapshot()
-    path = request.args.get('path')
-    try:
-        abs_path = resolve_requested_file(path, asset_roots)
-    except Exception as e:
-        abort(400, str(e))
-    mime, _ = mimetypes.guess_type(abs_path)
-    return send_file(abs_path, mimetype=mime or 'application/octet-stream')
+    return asset_api.api_assets_file_handler()
 
-@app.route('/api/assets/thumb', methods=['GET'])
 def api_assets_thumb():
-    asset_roots = _get_asset_roots_snapshot()
-    path = request.args.get('path')
-    size = int(request.args.get('size', 256))
-    try:
-        abs_path = resolve_requested_file(path, asset_roots)
-    except Exception as e:
-        abort(400, str(e))
-    thumb = generate_thumbnail_bytes(abs_path, max_size=size)
-    if not thumb:
-        abort(404, 'Could not generate thumbnail')
-    from io import BytesIO
-    return send_file(
-        BytesIO(thumb),
-        mimetype='image/png',
-        as_attachment=False,
-        download_name=Path(abs_path).name + '_thumb.png'
-    )
+    return asset_api.api_assets_thumb_handler()
 
-@app.route('/api/assets/details', methods=['GET'])
 def api_assets_details():
-    asset_roots = _get_asset_roots_snapshot()
-    path = request.args.get('path')
-    try:
-        abs_path = resolve_requested_file(path, asset_roots)
-        root = find_root_for_path(abs_path, asset_roots)
-        if not root:
-            abort(400, 'File not in allowed roots')
-        item = build_asset_item(abs_path, root.path, include_metadata=True)
-    except Exception as e:
-        abort(400, str(e))
-    return jsonify({'asset': item})
+    return asset_api.api_assets_details_handler()
 
 
-@app.route('/api/assets/metadata/repair', methods=['POST'])
 def api_assets_repair_metadata():
-    asset_roots = _get_asset_roots_snapshot()
-    payload = request.get_json(silent=True) or {}
-    path = payload.get('path')
-    overwrite = payload.get('overwrite', False) is True
-    try:
-        abs_path = resolve_requested_file(path, asset_roots)
-        root = find_root_for_path(abs_path, asset_roots)
-        if not root:
-            raise PermissionError('File not in allowed roots')
-        result = repair_png_bubba_metadata(abs_path, overwrite=overwrite)
-        item = build_asset_item(abs_path, root.path, include_metadata=True)
-    except Exception as e:
-        abort(400, str(e))
-    return jsonify({'result': result, 'asset': item})
+    return asset_api.api_assets_repair_metadata_handler()
 
 
-@app.route('/api/assets/open-folder', methods=['POST'])
 def api_assets_open_folder():
-    asset_roots = _get_asset_roots_snapshot()
-    payload = request.get_json(silent=True) or {}
-    path = payload.get('path')
-    try:
-        abs_path = resolve_requested_file(path, asset_roots)
-    except Exception as e:
-        abort(400, str(e))
+    return asset_api.api_assets_open_folder_handler()
 
-    folder = os.path.dirname(abs_path)
-    try:
-        if os.name == 'nt':
-            os.startfile(folder)
-        elif sys.platform == 'darwin':
-            subprocess.Popen(['open', folder])
-        else:
-            subprocess.Popen(['xdg-open', folder])
-    except Exception as e:
-        logger.exception('Open folder failed for %s', folder)
-        abort(500, str(e))
-    return jsonify({'opened': folder})
+def create_app() -> Flask:
+    app = Flask(__name__)
+    app.after_request(_add_cors_headers)
+
+    from blueprints.assets import assets_bp
+    from blueprints.settings import settings_bp
+    from blueprints.tags import tags_bp
+    from blueprints.ui import ui_bp
+
+    app.register_blueprint(ui_bp)
+    app.register_blueprint(tags_bp)
+    app.register_blueprint(settings_bp)
+    app.register_blueprint(assets_bp)
+    return app
+
+
+app = create_app()
+
 
 if __name__ == '__main__':
     logger.info('Bubba Asset Viewer server started on http://localhost:5001')
