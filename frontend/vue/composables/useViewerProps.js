@@ -34,6 +34,7 @@ export function useViewerProps(options) {
     selectAsset,
     clearSelection,
     copySelectedPaths,
+    copySelectedTagName,
     exportSelectedAssets,
     openCompareSelection,
     requestDeleteSelected,
@@ -48,6 +49,7 @@ export function useViewerProps(options) {
     tagFilters,
     tagCategories,
     tagStatusText,
+    tagCopyStatus,
     tagCountText,
     visibleTags,
     selectedTag,
@@ -157,6 +159,7 @@ export function useViewerProps(options) {
     tagFilters,
     tagCategories: tagCategories.value,
     tagStatusText: tagStatusText.value,
+    tagCopyStatus: tagCopyStatus.value,
     tagCountText: tagCountText.value,
     visibleTags: visibleTags.value,
     selectedTag: selectedTag.value,
@@ -172,6 +175,7 @@ export function useViewerProps(options) {
     loadMoreTags,
     exampleImageUrl,
     tagSearchUrl,
+    copySelectedTagName,
     startDetailsResize
   }));
 

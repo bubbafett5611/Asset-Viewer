@@ -26,6 +26,7 @@ export function useTags(options) {
   } = options;
 
   let tagSearchTimer = null;
+  let tagExampleRequestId = 0;
 
   const tagCategories = computed(() => tagCategoriesList.value);
   const filteredTags = computed(() => {
@@ -151,6 +152,7 @@ export function useTags(options) {
       return;
     }
 
+    const requestId = (tagExampleRequestId += 1);
     tagExamplesLoading.value = true;
     try {
       const url = buildQuery(API.tagExamples, { tag: tagName });
@@ -166,15 +168,37 @@ export function useTags(options) {
     } catch (error) {
       console.error(error);
     } finally {
-      tagExamplesLoading.value = false;
+      if (requestId === tagExampleRequestId) {
+        tagExamplesLoading.value = false;
+      }
     }
   }
 
-  async function selectTag(tag) {
+  function setSelectedTag(tag) {
     selectedTag.value = tag;
     recentTagNames.value = [tag.name, ...recentTagNames.value.filter((name) => name !== tag.name)].slice(0, 50);
     persistRecent();
+  }
+
+  async function selectTag(tag) {
+    setSelectedTag(tag);
     await fetchTagExamples(tag.name);
+  }
+
+  async function stepSelectedTag(delta) {
+    if (!visibleTags.value.length) {
+      return;
+    }
+
+    const currentIndex = visibleTags.value.findIndex((tag) => tag.name === selectedTag.value?.name);
+    const fallbackIndex = delta > 0 ? -1 : visibleTags.value.length;
+    const nextIndex = Math.min(
+      visibleTags.value.length - 1,
+      Math.max(0, (currentIndex >= 0 ? currentIndex : fallbackIndex) + delta)
+    );
+    const nextTag = visibleTags.value[nextIndex];
+    setSelectedTag(nextTag);
+    await fetchTagExamples(nextTag.name);
   }
 
   function exampleImageUrl(url) {
@@ -220,6 +244,7 @@ export function useTags(options) {
     toggleTagFavorite,
     loadMoreTags,
     selectTag,
+    stepSelectedTag,
     exampleImageUrl,
     tagSearchUrl,
     scheduleTagSearch,

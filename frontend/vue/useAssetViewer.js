@@ -151,10 +151,12 @@ export function useAssetViewerState() {
   const blurThumbnails = ref(false);
   const isDropOverlayVisible = ref(false);
   const isDeleteConfirmVisible = ref(false);
+  const isShortcutsModalVisible = ref(false);
 
   const tags = ref([]);
   const tagCategoriesList = ref([]);
   const selectedTag = ref(null);
+  const tagCopyStatus = ref('');
   const tagStatusText = ref('Open Tag Browser to load local CSV...');
   const isLoadingTags = ref(false);
   const tagExamplesLoading = ref(false);
@@ -202,6 +204,7 @@ export function useAssetViewerState() {
 
   const favoriteTagNames = ref(new Set(loadArrayFromStorage(FAVORITES_KEY)));
   const recentTagNames = ref(loadArrayFromStorage(RECENT_KEY));
+  let tagCopyStatusTimer = null;
 
   const pageSize = 120;
   const offset = ref(0);
@@ -272,6 +275,7 @@ export function useAssetViewerState() {
     toggleTagFavorite,
     loadMoreTags,
     selectTag,
+    stepSelectedTag,
     exampleImageUrl,
     tagSearchUrl,
     scheduleTagSearch,
@@ -637,6 +641,72 @@ export function useAssetViewerState() {
     }
   }
 
+  function showShortcutsModal() {
+    isShortcutsModalVisible.value = true;
+  }
+
+  function hideShortcutsModal() {
+    isShortcutsModalVisible.value = false;
+  }
+
+  async function imageBlobToPngBlob(blob) {
+    const bitmap = await window.createImageBitmap(blob);
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      bitmap.close?.();
+      throw new Error('Could not prepare image for clipboard.');
+    }
+    context.drawImage(bitmap, 0, 0);
+    bitmap.close?.();
+    return new Promise((resolve, reject) => {
+      canvas.toBlob((pngBlob) => {
+        if (pngBlob) {
+          resolve(pngBlob);
+          return;
+        }
+        reject(new Error('Could not prepare image for clipboard.'));
+      }, 'image/png');
+    });
+  }
+
+  async function copySelectedImageToClipboard(asset = selectedAsset.value) {
+    if (!asset?.path) {
+      statusText.value = 'Select an image to copy.';
+      return;
+    }
+    if (!isPreviewableAsset(asset)) {
+      statusText.value = 'Selected asset is not a copyable image.';
+      return;
+    }
+    if (!navigator.clipboard?.write || !window.ClipboardItem || !window.createImageBitmap) {
+      statusText.value = 'Image clipboard copy is not supported by this browser.';
+      return;
+    }
+
+    const assetName = asset.name || 'selected image';
+    statusText.value = `Copying image "${assetName}"...`;
+    try {
+      const response = await fetch(fileUrl(asset.path));
+      if (!response.ok) {
+        throw new Error(`Image copy failed (${response.status})`);
+      }
+      const sourceBlob = await response.blob();
+      const clipboardBlob = sourceBlob.type === 'image/png' ? sourceBlob : await imageBlobToPngBlob(sourceBlob);
+      await navigator.clipboard.write([
+        new window.ClipboardItem({
+          [clipboardBlob.type || 'image/png']: clipboardBlob
+        })
+      ]);
+      statusText.value = `Copied image "${assetName}" to clipboard.`;
+    } catch (error) {
+      console.error(error);
+      statusText.value = error?.message || 'Image copy failed.';
+    }
+  }
+
   const { onDocumentKeydown } = useKeyboardShortcuts({
     isTypingTarget,
     compareLeft,
@@ -644,11 +714,32 @@ export function useAssetViewerState() {
     closeCompare,
     isDeleteConfirmVisible,
     hideDeleteConfirm,
+    isShortcutsModalVisible,
+    hideShortcutsModal,
     selectedPaths,
+    selectedAsset,
+    selectedTag,
     clearSelection,
     activeTab,
     selectAllCurrentItems,
     copyText,
+    copySelectedTagName,
+    copySelectedName,
+    copySelectedPaths,
+    copySelectedImageToClipboard,
+    toggleBlurThumbnails,
+    refreshAssets,
+    fetchTags,
+    fetchFolderStats,
+    fetchMetadataHealth,
+    fetchSettings,
+    scanDuplicates,
+    exportSelectedAssets,
+    exportDuplicateGroups,
+    openContainingFolder,
+    toggleTagFavorite,
+    stepSelectedTag,
+    showShortcutsModal,
     searchInputRef,
     virtualColumnCount,
     stepSelectedAsset,
@@ -708,6 +799,35 @@ export function useAssetViewerState() {
     if (activeTab.value === 'duplicates') {
       duplicateStatusText.value = `Copied ${assetsToCopy.length} path(s).`;
     }
+  }
+
+  async function copySelectedTagName(tagName = selectedTag.value?.name) {
+    if (!tagName) {
+      return;
+    }
+    await copyText(tagName);
+    tagCopyStatus.value = 'Copied \u2713';
+    tagStatusText.value = `Copied tag "${tagName}".`;
+    if (tagCopyStatusTimer) {
+      window.clearTimeout(tagCopyStatusTimer);
+    }
+    tagCopyStatusTimer = window.setTimeout(() => {
+      tagCopyStatus.value = '';
+      tagCopyStatusTimer = null;
+    }, 1400);
+  }
+
+  async function copySelectedName() {
+    if (activeTab.value === 'tags') {
+      await copySelectedTagName();
+      return;
+    }
+    if (!selectedAsset.value?.name) {
+      statusText.value = 'Select media before copying a name.';
+      return;
+    }
+    await copyText(selectedAsset.value.name);
+    statusText.value = `Copied name "${selectedAsset.value.name}".`;
   }
 
   function exportSelectedAssets(format = 'json') {
@@ -795,6 +915,7 @@ export function useAssetViewerState() {
     selectAsset,
     clearSelection,
     copySelectedPaths,
+    copySelectedTagName,
     exportSelectedAssets,
     openCompareSelection,
     requestDeleteSelected,
@@ -809,6 +930,7 @@ export function useAssetViewerState() {
     tagFilters,
     tagCategories,
     tagStatusText,
+    tagCopyStatus,
     tagCountText,
     visibleTags,
     selectedTag,
@@ -905,6 +1027,7 @@ export function useAssetViewerState() {
     safeDelete,
     isDropOverlayVisible,
     isDeleteConfirmVisible,
+    isShortcutsModalVisible,
     currentRootLabel,
     duplicateTaskId,
     duplicateTaskStatusText,
@@ -916,6 +1039,8 @@ export function useAssetViewerState() {
     closeCompare,
     fileUrl,
     hideDeleteConfirm,
+    hideShortcutsModal,
+    showShortcutsModal,
     confirmDelete,
     startCompareDrag,
     dragCompareDivider,

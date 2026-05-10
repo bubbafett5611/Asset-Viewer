@@ -249,6 +249,71 @@ body.preview-resizing {
   color: var(--text-soft);
 }
 
+.copyable-kv-value {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: copy;
+  transition: color var(--transition-base);
+}
+
+.copyable-kv-value:hover,
+.copyable-kv-value:focus-visible {
+  color: var(--text);
+}
+
+.copyable-kv-value:focus-visible {
+  outline: 2px solid rgba(var(--accent-rgb), 0.5);
+  outline-offset: 4px;
+  border-radius: 6px;
+}
+
+.copyable-kv-value span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.copy-confirmation {
+  margin-left: auto;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(var(--accent-rgb), 0.38);
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent);
+  font-family: var(--mono-font);
+  font-size: 0.7rem;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.copy-icon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+  transition:
+    color var(--transition-base),
+    transform var(--transition-fast);
+}
+
+.copyable-kv-value:hover .copy-icon,
+.copyable-kv-value:focus-visible .copy-icon {
+  color: var(--accent);
+  transform: translateY(-1px);
+}
+
 .kv-value-wrap {
   display: grid;
   gap: 8px;

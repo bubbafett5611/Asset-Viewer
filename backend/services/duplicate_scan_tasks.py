@@ -15,6 +15,9 @@ TASK_STATUS_RUNNING = "running"
 TASK_STATUS_COMPLETED = "completed"
 TASK_STATUS_FAILED = "failed"
 TASK_STATUS_CANCELLED = "cancelled"
+TASK_RETENTION_SECONDS = 30 * 60
+MAX_COMPLETED_TASKS = 50
+TERMINAL_TASK_STATUSES = {TASK_STATUS_COMPLETED, TASK_STATUS_FAILED, TASK_STATUS_CANCELLED}
 
 
 class DuplicateScanCancelled(Exception):
@@ -90,6 +93,25 @@ _tasks: dict[str, DuplicateScanTask] = {}
 _tasks_lock = threading.Lock()
 
 
+def _prune_duplicate_scan_tasks(now: float) -> None:
+    expired_task_ids = [
+        task_id
+        for task_id, task in _tasks.items()
+        if task.status in TERMINAL_TASK_STATUSES
+        and task.completed_at is not None
+        and now - task.completed_at > TASK_RETENTION_SECONDS
+    ]
+    for task_id in expired_task_ids:
+        _tasks.pop(task_id, None)
+
+    completed_tasks = sorted(
+        (task for task in _tasks.values() if task.status in TERMINAL_TASK_STATUSES),
+        key=lambda task: task.completed_at or task.created_at,
+    )
+    for task in completed_tasks[: max(0, len(completed_tasks) - MAX_COMPLETED_TASKS)]:
+        _tasks.pop(task.task_id, None)
+
+
 def create_duplicate_scan_task(root: str, include_near: bool, near_threshold: int, limit: int) -> DuplicateScanTask:
     task = DuplicateScanTask(
         task_id=uuid4().hex,
@@ -99,6 +121,7 @@ def create_duplicate_scan_task(root: str, include_near: bool, near_threshold: in
         limit=limit,
     )
     with _tasks_lock:
+        _prune_duplicate_scan_tasks(time.time())
         _tasks[task.task_id] = task
     return task
 

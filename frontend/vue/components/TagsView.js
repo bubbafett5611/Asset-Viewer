@@ -24,6 +24,10 @@ export const TagsView = {
       type: String,
       required: true
     },
+    tagCopyStatus: {
+      type: String,
+      default: ''
+    },
     tagCountText: {
       type: String,
       required: true
@@ -84,9 +88,28 @@ export const TagsView = {
       type: Function,
       required: true
     },
+    copySelectedTagName: {
+      type: Function,
+      required: true
+    },
     startDetailsResize: {
       type: Function,
       required: true
+    }
+  },
+  watch: {
+    'selectedTag.name'() {
+      this.scrollSelectedTagIntoView();
+    }
+  },
+  mounted() {
+    this.scrollSelectedTagIntoView();
+  },
+  methods: {
+    scrollSelectedTagIntoView() {
+      this.$nextTick(() => {
+        this.$refs.tagList?.querySelector('.tag-row.active')?.scrollIntoView({ block: 'nearest' });
+      });
     }
   },
   template: `
@@ -131,7 +154,7 @@ export const TagsView = {
                         </div>
                         <div class="count-badge">{{ tagCountText }}</div>
                     </div>
-                    <div class="tag-list" aria-live="polite">
+                    <div ref="tagList" class="tag-list" aria-live="polite">
                         <TagRow
                             v-for="tag in visibleTags"
                             :key="tag.name"
@@ -161,8 +184,10 @@ export const TagsView = {
                 :aliases="selectedTagAliases"
                 :examples="selectedTagExamples"
                 :examples-loading="tagExamplesLoading"
+                :copy-status="tagCopyStatus"
                 :example-image-url="exampleImageUrl"
                 :tag-search-url="tagSearchUrl"
+                @copy-tag="copySelectedTagName"
                 @toggle-favorite="toggleTagFavorite"
             />
         </div>

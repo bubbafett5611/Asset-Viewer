@@ -23,11 +23,9 @@ export function useViewerLayout(options) {
   }));
   const shouldVirtualize = computed(() => assets.value.length > 240);
   const virtualColumnCount = computed(() => {
-    if (!shouldVirtualize.value) {
-      return 1;
-    }
     const width = Math.max(1, assetListWidth.value || assetListRef.value?.clientWidth || 1);
-    return Math.max(1, Math.floor(width / densityConfig.value.minWidth));
+    const gap = filters.density === 'large' ? 14 : 10;
+    return Math.max(1, Math.floor((width + gap) / (densityConfig.value.minWidth + gap)));
   });
   const virtualRowHeight = computed(() => densityConfig.value.rowHeight);
   const virtualRowCount = computed(() => Math.ceil(assets.value.length / virtualColumnCount.value));

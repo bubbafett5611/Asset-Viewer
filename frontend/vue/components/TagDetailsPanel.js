@@ -21,6 +21,10 @@ export const TagDetailsPanel = {
       type: Boolean,
       default: false
     },
+    copyStatus: {
+      type: String,
+      default: ''
+    },
     exampleImageUrl: {
       type: Function,
       required: true
@@ -30,7 +34,7 @@ export const TagDetailsPanel = {
       required: true
     }
   },
-  emits: ['toggle-favorite'],
+  emits: ['copy-tag', 'toggle-favorite'],
   template: `
         <aside class="panel tag-details-panel details">
             <div class="details-header">
@@ -40,7 +44,23 @@ export const TagDetailsPanel = {
 
             <div class="details-scroll">
                 <div v-if="selectedTag" class="details-grid">
-                    <div class="kv"><div class="kv-key">Name</div><div class="kv-value">{{ selectedTag.name }}</div></div>
+                    <div class="kv">
+                        <div class="kv-key">Name</div>
+                        <button
+                            class="kv-value copyable-kv-value tag-name-copy-button"
+                            type="button"
+                            title="Copy tag name"
+                            :aria-label="'Copy tag name ' + selectedTag.name"
+                            @click="$emit('copy-tag', selectedTag.name)"
+                        >
+                            <span>{{ selectedTag.name }}</span>
+                            <span v-if="copyStatus" class="copy-confirmation">{{ copyStatus }}</span>
+                            <svg class="copy-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <rect x="9" y="9" width="11" height="11" rx="2"></rect>
+                                <path d="M5 15V5a2 2 0 0 1 2-2h10"></path>
+                            </svg>
+                        </button>
+                    </div>
                     <div class="kv"><div class="kv-key">Category</div><div class="kv-value">{{ selectedTag.category || 'unknown' }}</div></div>
                     <div class="kv"><div class="kv-key">Count</div><div class="kv-value">{{ selectedTag.count }}</div></div>
 
