@@ -5,6 +5,8 @@ import { useTags } from "/vue/composables/useTags.js";
 import { useDuplicates } from "/vue/composables/useDuplicates.js";
 import { useKeyboardShortcuts } from "/vue/composables/useKeyboardShortcuts.js";
 import { useAssets } from "/vue/composables/useAssets.js";
+import { useSettings } from "/vue/composables/useSettings.js";
+import { useStats } from "/vue/composables/useStats.js";
 
 const FAVORITES_KEY = "bubba_asset_viewer_tag_favorites";
 const RECENT_KEY = "bubba_asset_viewer_tag_recent";
@@ -295,78 +297,58 @@ export function useAssetViewerState() {
         recentTagNames,
     });
 
+    const {
+        folderStatsSummary,
+        folderStatsMetrics,
+        metadataStatsMetrics,
+        statsPrimaryCount,
+        statsRootReports,
+        isLoadingAnyFolderStats,
+        isLoadingAnyMetadataHealth,
+        fetchRootMetadataHealth,
+        fetchMetadataHealth,
+        fetchRootFolderStats,
+        fetchFolderStats,
+    } = useStats({
+        API,
+        buildQuery,
+        roots,
+        filters,
+        rootStatsReports,
+        metadataHealth,
+        metadataHealthStatus,
+        isLoadingMetadataHealth,
+        folderStats,
+        folderStatsStatus,
+        isLoadingFolderStats,
+        formatBytes,
+    });
+
+    const {
+        settingsSections,
+        fetchSettings,
+        settingsFieldValue,
+        settingsListValue,
+        settingsListDraftValue,
+        updateSettingsListDraft,
+        updateSetting,
+        updateStringListItem,
+        addStringListSetting,
+        removeStringListItem,
+    } = useSettings({
+        API,
+        appSettings,
+        appSettingsSchema,
+        settingsStatus,
+        isLoadingSettings,
+        isSavingSettings,
+        settingsListDrafts,
+        roots,
+        filters,
+        blurThumbnails,
+    });
+
     const metadataFilterList = computed(() => METADATA_FILTERS);
-    const folderStatsSummary = computed(() => {
-        if (!folderStats.value) {
-            return [];
-        }
-        return [
-            `Files ${folderStats.value.total_files || 0}`,
-            `Size ${formatBytes(folderStats.value.total_bytes || 0)}`,
-            `Images ${folderStats.value.image_files || 0}`,
-            `Bubba ${folderStats.value.bubba_metadata || 0}`,
-            `Workflow ${folderStats.value.workflow || 0}`,
-            `Params ${folderStats.value.parameters || 0}`,
-            `Missing ${folderStats.value.no_tracked_metadata || 0}`,
-        ];
-    });
-    const folderStatsMetrics = computed(() => {
-        return buildFolderStatsMetrics(folderStats.value);
-    });
-    const metadataStatsMetrics = computed(() => {
-        const source = metadataHealth.value || folderStats.value;
-        return buildMetadataStatsMetrics(source);
-    });
-    const statsPrimaryCount = computed(() => {
-        const source = metadataHealth.value || folderStats.value;
-        if (!source) {
-            return 0;
-        }
-        return source.total_assets || source.png_assets || source.image_files || source.total_files || 0;
-    });
-    const statsRootReports = computed(() => roots.value.map((root) => {
-        const state = statsStateForRoot(root);
-        const metadataSource = state.metadataHealth || state.folderStats;
-        return {
-            key: root.key,
-            label: root.label || root.key,
-            folderStats: state.folderStats,
-            metadataHealth: state.metadataHealth,
-            folderStatsStatus: state.folderStatsStatus,
-            metadataHealthStatus: state.metadataHealthStatus,
-            isLoadingFolderStats: state.isLoadingFolderStats,
-            isLoadingMetadataHealth: state.isLoadingMetadataHealth,
-            folderMetrics: buildFolderStatsMetrics(state.folderStats),
-            metadataMetrics: buildMetadataStatsMetrics(metadataSource),
-        };
-    }));
-    const isLoadingAnyFolderStats = computed(() => statsRootReports.value.some((report) => report.isLoadingFolderStats));
-    const isLoadingAnyMetadataHealth = computed(() => statsRootReports.value.some((report) => report.isLoadingMetadataHealth));
-    const settingsSections = computed(() => {
-        const schema = appSettingsSchema.value;
-        if (!schema || typeof schema !== "object") {
-            return [];
-        }
-        const rootProperties = schema.properties || {};
-        return Object.entries(rootProperties).map(([sectionKey, sectionSchema]) => {
-            const resolvedSection = resolveSettingsSchemaRef(sectionSchema);
-            const fields = Object.entries(resolvedSection.properties || {}).map(([fieldKey, fieldSchema]) => {
-                const resolvedField = resolveSettingsSchemaRef(fieldSchema);
-                return {
-                    key: fieldKey,
-                    label: resolvedField.title || titleCaseSettingKey(fieldKey),
-                    type: settingsInputType(resolvedField),
-                    description: resolvedField.description || "",
-                    options: Array.isArray(resolvedField.enum) ? resolvedField.enum.map((value) => ({ value, label: titleCaseSettingKey(value) })) : [],
-                };
-            });
-            return {
-                key: sectionKey,
-                label: sectionSchema.title || resolvedSection.title || titleCaseSettingKey(sectionKey),
-                fields,
-            };
-        });
-    });
 
     function measureAssetList() {
         const element = assetListRef.value;
@@ -428,300 +410,8 @@ export function useAssetViewerState() {
         }
     }
 
-    function applySettings(settings) {
-        if (!settings || typeof settings !== "object") {
-            return;
-        }
-        appSettings.value = settings;
-        const viewer = settings.viewer || {};
-        if (["compact", "comfortable", "large"].includes(viewer.density)) {
-            filters.density = viewer.density;
-        }
-        blurThumbnails.value = Boolean(viewer.preview);
-    }
-
-    function resolveSettingsSchemaRef(schema) {
-        if (!schema || typeof schema !== "object") {
-            return {};
-        }
-        if (schema.$ref && appSettingsSchema.value?.$defs) {
-            const refName = String(schema.$ref).replace("#/$defs/", "");
-            return appSettingsSchema.value.$defs[refName] || schema;
-        }
-        return schema;
-    }
-
-    function titleCaseSettingKey(key) {
-        return String(key || "")
-            .replace(/[_-]+/g, " ")
-            .replace(/\b\w/g, (letter) => letter.toUpperCase());
-    }
-
-    function formatNumber(value) {
-        return Number(value || 0).toLocaleString();
-    }
-
-    function metadataCoveragePercent(value, source) {
-        const denominator = source?.total_assets || source?.png_assets || source?.image_files || source?.total_files || 0;
-        if (!denominator) {
-            return 0;
-        }
-        return Math.max(0, Math.min(100, Math.round((Number(value || 0) / denominator) * 100)));
-    }
-
-    function buildFolderStatsMetrics(stats) {
-        if (!stats) {
-            return [];
-        }
-        return [
-            { key: "files", label: "Files", value: formatNumber(stats.total_files || 0), note: "All files" },
-            { key: "size", label: "Storage", value: formatBytes(stats.total_bytes || 0), note: "Total size" },
-            { key: "images", label: "Images", value: formatNumber(stats.image_files || 0), note: "Previewable files" },
-            { key: "other", label: "Other", value: formatNumber(stats.other_files || 0), note: "Everything else" },
-        ];
-    }
-
-    function buildMetadataStatsMetrics(source) {
-        if (!source) {
-            return [];
-        }
-        return [
-            { key: "bubba", label: "Bubba", value: source.bubba_metadata || 0 },
-            { key: "workflow", label: "Workflow", value: source.workflow || 0 },
-            { key: "parameters", label: "Params", value: source.parameters || 0 },
-            { key: "missing", label: "Missing", value: source.no_tracked_metadata || 0 },
-            { key: "invalid", label: "Invalid", value: source.invalid_bubba_metadata || 0 },
-        ].map((item) => ({
-            ...item,
-            valueLabel: formatNumber(item.value),
-            percent: metadataCoveragePercent(item.value, source),
-        }));
-    }
-
-    function defaultRootStatsState() {
-        return {
-            folderStats: null,
-            metadataHealth: null,
-            folderStatsStatus: "Folder stats not loaded.",
-            metadataHealthStatus: "Metadata report not loaded.",
-            isLoadingFolderStats: false,
-            isLoadingMetadataHealth: false,
-        };
-    }
-
-    function statsStateForRoot(root) {
-        const key = root?.key || "";
-        if (!key) {
-            return defaultRootStatsState();
-        }
-        if (!rootStatsReports[key]) {
-            rootStatsReports[key] = defaultRootStatsState();
-        }
-        return rootStatsReports[key];
-    }
-
-    function settingsInputType(schema) {
-        if (Array.isArray(schema.enum)) {
-            return "select";
-        }
-        if (schema.type === "boolean") {
-            return "boolean";
-        }
-        if (schema.type === "array" && schema.items?.type === "string") {
-            return "string_list";
-        }
-        return "text";
-    }
-
-    async function fetchSettings() {
-        isLoadingSettings.value = true;
-        settingsStatus.value = "Loading settings...";
-        try {
-            const response = await fetch(API.settings);
-            if (!response.ok) {
-                throw new Error(`Failed to load settings (${response.status})`);
-            }
-            const payload = await response.json();
-            appSettingsSchema.value = payload.schema && typeof payload.schema === "object" ? payload.schema : null;
-            applySettings(payload.settings);
-            settingsStatus.value = "Settings loaded.";
-        } catch (error) {
-            console.error(error);
-            settingsStatus.value = error?.message || "Settings failed to load.";
-        } finally {
-            isLoadingSettings.value = false;
-        }
-    }
-
-    function settingsFieldValue(sectionKey, fieldKey) {
-        return appSettings.value?.[sectionKey]?.[fieldKey];
-    }
-
-    function settingsListValue(sectionKey, fieldKey) {
-        const value = settingsFieldValue(sectionKey, fieldKey);
-        return Array.isArray(value) ? value : [];
-    }
-
-    function settingsListDraftKey(sectionKey, fieldKey) {
-        return `${sectionKey}.${fieldKey}`;
-    }
-
-    function settingsListDraftValue(sectionKey, fieldKey) {
-        return settingsListDrafts[settingsListDraftKey(sectionKey, fieldKey)] || "";
-    }
-
-    function updateSettingsListDraft(sectionKey, fieldKey, value) {
-        settingsListDrafts[settingsListDraftKey(sectionKey, fieldKey)] = value;
-    }
-
-    async function saveSettings(nextSettings) {
-        isSavingSettings.value = true;
-        settingsStatus.value = "Saving settings...";
-        try {
-            const response = await fetch(API.settings, {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(nextSettings),
-            });
-            if (!response.ok) {
-                throw new Error(`Failed to save settings (${response.status})`);
-            }
-            const payload = await response.json();
-            appSettingsSchema.value = payload.schema && typeof payload.schema === "object" ? payload.schema : null;
-            applySettings(payload.settings);
-            if (Array.isArray(payload.roots)) {
-                roots.value = payload.roots;
-                if (filters.root && !roots.value.some((root) => root.key === filters.root)) {
-                    filters.root = roots.value[0]?.key || "";
-                }
-            }
-            settingsStatus.value = "Settings saved.";
-        } catch (error) {
-            console.error(error);
-            settingsStatus.value = error?.message || "Settings failed to save.";
-        } finally {
-            isSavingSettings.value = false;
-        }
-    }
-
-    function cloneSettingsPayload() {
-        return JSON.parse(JSON.stringify(appSettings.value || {}));
-    }
-
-    function updateSetting(sectionKey, fieldKey, value) {
-        const nextSettings = cloneSettingsPayload();
-        nextSettings[sectionKey] = nextSettings[sectionKey] && typeof nextSettings[sectionKey] === "object" ? nextSettings[sectionKey] : {};
-        nextSettings[sectionKey][fieldKey] = value;
-        saveSettings(nextSettings);
-    }
-
-    function updateStringListItem(sectionKey, fieldKey, index, value) {
-        const nextValue = [...settingsListValue(sectionKey, fieldKey)];
-        const cleanedValue = String(value || "").trim();
-        if (cleanedValue) {
-            nextValue[index] = cleanedValue;
-        } else {
-            nextValue.splice(index, 1);
-        }
-        updateSetting(sectionKey, fieldKey, nextValue);
-    }
-
-    function addStringListSetting(sectionKey, fieldKey) {
-        const draftKey = settingsListDraftKey(sectionKey, fieldKey);
-        const nextItem = String(settingsListDrafts[draftKey] || "").trim();
-        if (!nextItem) {
-            return;
-        }
-        updateSetting(sectionKey, fieldKey, [...settingsListValue(sectionKey, fieldKey), nextItem]);
-        settingsListDrafts[draftKey] = "";
-    }
-
-    function removeStringListItem(sectionKey, fieldKey, index) {
-        const nextValue = [...settingsListValue(sectionKey, fieldKey)];
-        nextValue.splice(index, 1);
-        updateSetting(sectionKey, fieldKey, nextValue);
-    }
-
     function metadataBadges(asset) {
         return Array.isArray(asset?.metadata_badges) ? asset.metadata_badges : [];
-    }
-
-    async function fetchRootMetadataHealth(root, { refresh = true, cacheOnly = false } = {}) {
-        if (!root?.key) {
-            return;
-        }
-        const state = statsStateForRoot(root);
-        state.isLoadingMetadataHealth = true;
-        state.metadataHealthStatus = "Loading metadata report...";
-        try {
-            const response = await fetch(buildQuery(API.metadataHealth, { root: root.key, refresh, cache_only: cacheOnly }));
-            if (!response.ok) {
-                throw new Error(`Metadata report failed (${response.status})`);
-            }
-            const payload = await response.json();
-            state.metadataHealth = payload.stats || null;
-            if (payload.stats) {
-                state.metadataHealthStatus = payload.cached ? "Loaded cached metadata report." : "Metadata report loaded.";
-            } else {
-                state.metadataHealthStatus = "Metadata report not loaded.";
-            }
-        } catch (error) {
-            console.error(error);
-            state.metadataHealth = null;
-            state.metadataHealthStatus = error?.message || "Metadata report failed.";
-        } finally {
-            state.isLoadingMetadataHealth = false;
-        }
-    }
-
-    async function fetchMetadataHealth(options = {}) {
-        const targets = roots.value.length ? roots.value : filters.root ? [{ key: filters.root, label: filters.root }] : [];
-        if (!targets.length) {
-            metadataHealthStatus.value = "Select a folder before loading metadata report.";
-            return;
-        }
-        isLoadingMetadataHealth.value = true;
-        await Promise.all(targets.map((root) => fetchRootMetadataHealth(root, options)));
-        metadataHealth.value = statsStateForRoot(targets[0]).metadataHealth;
-        metadataHealthStatus.value = "Metadata reports loaded.";
-        isLoadingMetadataHealth.value = false;
-    }
-
-    async function fetchRootFolderStats(root, { refresh = false } = {}) {
-        if (!root?.key) {
-            return;
-        }
-        const state = statsStateForRoot(root);
-        state.isLoadingFolderStats = true;
-        state.folderStatsStatus = "Loading folder stats...";
-        try {
-            const response = await fetch(buildQuery(API.stats, { root: root.key, refresh }));
-            if (!response.ok) {
-                throw new Error(`Folder stats failed (${response.status})`);
-            }
-            const payload = await response.json();
-            state.folderStats = payload.stats || null;
-            state.folderStatsStatus = payload.cached ? "Loaded cached folder stats." : "Folder stats loaded.";
-        } catch (error) {
-            console.error(error);
-            state.folderStats = null;
-            state.folderStatsStatus = error?.message || "Folder stats failed.";
-        } finally {
-            state.isLoadingFolderStats = false;
-        }
-    }
-
-    async function fetchFolderStats(options = {}) {
-        const targets = roots.value.length ? roots.value : filters.root ? [{ key: filters.root, label: filters.root }] : [];
-        if (!targets.length) {
-            folderStatsStatus.value = "Select a folder before loading folder stats.";
-            return;
-        }
-        isLoadingFolderStats.value = true;
-        await Promise.all(targets.map((root) => fetchRootFolderStats(root, options)));
-        folderStats.value = statsStateForRoot(targets[0]).folderStats;
-        folderStatsStatus.value = "Folder stats loaded.";
-        isLoadingFolderStats.value = false;
     }
 
 
