@@ -48,3 +48,4 @@ Desktop.ini
 
 # Local scratch/output directories
 tmp_compare/
+.vscode/
