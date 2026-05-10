@@ -7,6 +7,7 @@ import re
 from bs4 import BeautifulSoup
 from urllib.parse import quote_plus, urlparse
 import logging
+import queue
 import threading
 import time
 from io import BytesIO
@@ -245,24 +246,36 @@ def ensure_tag_list():
 
 # Call on startup
 ensure_tag_list()
-from flask import Flask, jsonify, send_file, request, abort
+from flask import Flask, jsonify, send_file, request, abort, stream_with_context
 from pathlib import Path
 import os
 import mimetypes
+import subprocess
+import sys
 
 import json
 from asset_viewer import (
     resolve_requested_root,
     scan_assets,
+    scan_duplicate_assets,
+    metadata_health_report,
+    folder_stats_report,
+    repair_png_bubba_metadata,
     build_asset_item,
     generate_thumbnail_bytes,
     resolve_requested_file,
     find_root_for_path,
     AssetRoot,
     make_unique_destination_path,
+    move_file_to_trash,
     sanitize_upload_filename,
     ALLOWED_UPLOAD_IMAGE_EXTENSIONS,
     Image,
+)
+from settings_model import (
+    Settings,
+    save_settings,
+    validate_settings_payload,
 )
 
 app = Flask(__name__)
@@ -423,14 +436,23 @@ def bubba_assets_delete():
 
     if not paths:
         abort(400, 'No paths provided')
+    safe_delete = payload.get('safe_delete', True) is not False
 
     deleted = []
+    moved = []
     errors = []
     for p in paths:
         try:
             abs_path = resolve_requested_file(p, ASSET_ROOTS)
+            root = find_root_for_path(abs_path, ASSET_ROOTS)
+            if not root:
+                raise PermissionError('File not in allowed roots')
             if os.path.exists(abs_path):
-                os.remove(abs_path)
+                if safe_delete:
+                    destination = move_file_to_trash(abs_path, root.path)
+                    moved.append({'path': p, 'destination': destination})
+                else:
+                    os.remove(abs_path)
                 deleted.append(p)
                 logger.info('Deleted file: %s', abs_path)
             else:
@@ -439,14 +461,16 @@ def bubba_assets_delete():
             logger.exception('Delete failed for %s', p)
             errors.append({'path': p, 'error': str(e)})
 
-    return jsonify({'deleted': deleted, 'errors': errors})
+    return jsonify({'deleted': deleted, 'moved': moved, 'safe_delete': safe_delete, 'errors': errors})
 
 @app.route('/')
 def index():
-    frontend_path = Path(__file__).parent.parent / 'frontend' / 'asset_viewer.html'
+    frontend_root = Path(__file__).parent.parent / 'frontend'
+    frontend_path = frontend_root / 'asset_viewer_vue.html'
     if not frontend_path.exists():
         return '<h1>Frontend not found</h1>', 404
     return send_file(frontend_path)
+
 
 @app.route('/asset_viewer.css')
 def asset_viewer_css():
@@ -454,6 +478,36 @@ def asset_viewer_css():
     if not css_path.exists():
         return '', 404
     return send_file(css_path, mimetype='text/css')
+
+
+@app.route('/styles/<path:filename>')
+def asset_viewer_style_file(filename):
+    styles_root = (Path(__file__).parent.parent / 'frontend' / 'styles').resolve()
+    requested = (styles_root / filename).resolve()
+    if os.path.commonpath([str(styles_root), str(requested)]) != str(styles_root):
+        abort(403, 'Invalid style path')
+    if not requested.exists() or not requested.is_file():
+        return '', 404
+    return send_file(requested, mimetype='text/css')
+
+
+@app.route('/asset_viewer_vue.js')
+def asset_viewer_vue_js():
+    js_path = Path(__file__).parent.parent / 'frontend' / 'asset_viewer_vue.js'
+    if not js_path.exists():
+        return '', 404
+    return send_file(js_path, mimetype='application/javascript')
+
+
+@app.route('/vue/<path:filename>')
+def asset_viewer_vue_module(filename):
+    vue_root = (Path(__file__).parent.parent / 'frontend' / 'vue').resolve()
+    requested = (vue_root / filename).resolve()
+    if os.path.commonpath([str(vue_root), str(requested)]) != str(vue_root):
+        abort(403, 'Invalid module path')
+    if not requested.exists() or not requested.is_file():
+        return '', 404
+    return send_file(requested, mimetype='application/javascript')
 
 @app.route('/danbooru_e621_merged.csv')
 def serve_tag_csv():
@@ -463,12 +517,43 @@ def serve_tag_csv():
 
 @app.route('/api/tags', methods=['GET'])
 def api_tags():
+    q = request.args.get('q', '').strip()
+    category = request.args.get('category', '').strip()
+    try:
+        limit = max(1, min(int(request.args.get('limit', 300)), 1000))
+        offset = max(0, int(request.args.get('offset', 0)))
+    except ValueError:
+        abort(400, 'Invalid pagination parameter')
+
+    normalized_q = re.sub(r'[\s_-]+', '_', q.lower()).strip('_')
     tags = []
+    categories = set()
+    matched_count = 0
     with open(TAG_LIST_LOCAL, 'r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         for row in reader:
-            tags.append(row)
-    return jsonify({'tags': tags})
+            row_category = str(row.get('category') or '')
+            categories.add(row_category)
+            if category and row_category != category:
+                continue
+            if normalized_q:
+                search_blob = re.sub(
+                    r'[\s_-]+',
+                    '_',
+                    f"{row.get('name', '')} {row.get('aliases', '')}".lower(),
+                )
+                if normalized_q not in search_blob:
+                    continue
+            if matched_count >= offset and len(tags) < limit:
+                tags.append(row)
+            matched_count += 1
+    return jsonify({
+        'tags': tags,
+        'total': matched_count,
+        'limit': limit,
+        'offset': offset,
+        'categories': sorted([value for value in categories if value]),
+    })
 
 @app.route('/bubba/tag_examples')
 def bubba_tag_examples():
@@ -624,18 +709,48 @@ def bubba_tag_example_image():
     except Exception as e:
         return f'Failed to fetch image: {e}', 404
 
+SETTINGS_FILE = Path(__file__).parent.parent / 'settings.json'
+
+
+def _asset_roots_from_settings(settings: Settings):
+    return [
+        AssetRoot(key=os.path.basename(path), label=os.path.basename(path), path=path)
+        for path in settings.general.asset_roots
+    ]
+
+
 # Load asset roots from settings.json
 def load_asset_roots():
-    settings_path = Path(__file__).parent.parent / 'settings.json'
-    if not settings_path.exists():
-        raise RuntimeError(f"settings.json not found at {settings_path}")
-    with open(settings_path, 'r', encoding='utf-8') as f:
-        settings = json.load(f)
-    roots = settings.get('asset_roots', [])
-    # Use AssetRoot for type compatibility
-    return [AssetRoot(key=os.path.basename(path), label=os.path.basename(path), path=path) for path in roots]
+    settings = Settings()
+    return _asset_roots_from_settings(settings)
 
 ASSET_ROOTS = load_asset_roots()
+
+
+@app.route('/api/settings', methods=['GET'])
+def api_settings():
+    settings = Settings()
+    return jsonify({
+        'settings': settings.model_dump(mode='json'),
+        'schema': Settings.model_json_schema(),
+    })
+
+
+@app.route('/api/settings', methods=['PUT'])
+def api_update_settings():
+    global ASSET_ROOTS
+    payload = request.get_json(silent=True) or {}
+    try:
+        settings = validate_settings_payload(payload)
+    except Exception as e:
+        abort(400, str(e))
+    save_settings(SETTINGS_FILE, settings)
+    ASSET_ROOTS = _asset_roots_from_settings(settings)
+    return jsonify({
+        'settings': settings.model_dump(mode='json'),
+        'schema': Settings.model_json_schema(),
+        'roots': [root.__dict__ for root in ASSET_ROOTS],
+    })
 
 @app.route('/api/roots', methods=['GET'])
 def api_roots():
@@ -648,15 +763,29 @@ def api_assets_list():
     root_key = request.args.get('root')
     q = request.args.get('q', '')
     ext = request.args.get('ext', '')
-    limit = int(request.args.get('limit', 100))
-    offset = int(request.args.get('offset', 0))
+    try:
+        limit = int(request.args.get('limit', 100))
+        offset = int(request.args.get('offset', 0))
+    except ValueError:
+        abort(400, 'Invalid pagination parameter')
     include_metadata = request.args.get('include_metadata', 'false').lower() == 'true'
-    sort_by = request.args.get('sort_by', 'name')
-    sort_dir = request.args.get('sort_dir', 'asc')
+    sort_by = request.args.get('sort_by', 'modified')
+    sort_dir = request.args.get('sort_dir', 'desc')
     min_size_bytes = request.args.get('min_size_bytes')
     max_size_bytes = request.args.get('max_size_bytes')
     modified_after_ts = request.args.get('modified_after_ts')
     metadata_mode = request.args.get('metadata_mode', 'all')
+    metadata_badges = [
+        item.strip()
+        for item in request.args.get('metadata_badges', '').split(',')
+        if item.strip()
+    ]
+    try:
+        min_size_filter = int(min_size_bytes) if min_size_bytes else None
+        max_size_filter = int(max_size_bytes) if max_size_bytes else None
+        modified_after_filter = float(modified_after_ts) if modified_after_ts else None
+    except ValueError:
+        abort(400, 'Invalid numeric filter')
 
     try:
         root_path = resolve_requested_root(root_key, ASSET_ROOTS)
@@ -672,12 +801,116 @@ def api_assets_list():
         offset=offset,
         sort_by=sort_by,
         sort_dir=sort_dir,
-        min_size_bytes=int(min_size_bytes) if min_size_bytes else None,
-        max_size_bytes=int(max_size_bytes) if max_size_bytes else None,
-        modified_after_ts=float(modified_after_ts) if modified_after_ts else None,
+        min_size_bytes=min_size_filter,
+        max_size_bytes=max_size_filter,
+        modified_after_ts=modified_after_filter,
         metadata_mode=metadata_mode,
+        metadata_badge_filter=metadata_badges,
     )
     return jsonify({'assets': assets, 'root': root_key})
+
+
+@app.route('/api/assets/metadata/health', methods=['GET'])
+def api_assets_metadata_health():
+    root_key = request.args.get('root')
+    refresh = request.args.get('refresh', 'false').lower() == 'true'
+    cache_only = request.args.get('cache_only', 'false').lower() == 'true'
+    try:
+        limit = int(request.args.get('limit', 10000))
+    except ValueError:
+        abort(400, 'Invalid metadata health parameter')
+    try:
+        root_path = resolve_requested_root(root_key, ASSET_ROOTS)
+    except Exception as e:
+        abort(400, str(e))
+    report, cached = metadata_health_report(root_path, limit=limit, refresh=refresh, cache_only=cache_only)
+    return jsonify({'root': root_key, 'stats': report.model_dump(mode='json') if report else None, 'cached': cached})
+
+
+@app.route('/api/assets/stats', methods=['GET'])
+def api_assets_stats():
+    root_key = request.args.get('root')
+    refresh = request.args.get('refresh', 'false').lower() == 'true'
+    cache_only = request.args.get('cache_only', 'false').lower() == 'true'
+    try:
+        root_path = resolve_requested_root(root_key, ASSET_ROOTS)
+    except Exception as e:
+        abort(400, str(e))
+    report, cached = folder_stats_report(root_path, refresh=refresh, cache_only=cache_only)
+    return jsonify({'root': root_key, 'stats': report.model_dump(mode='json') if report else None, 'cached': cached})
+
+
+@app.route('/api/assets/duplicates', methods=['GET'])
+def api_assets_duplicates():
+    root_key = request.args.get('root')
+    include_near = request.args.get('include_near', 'false').lower() == 'true'
+    try:
+        near_threshold = int(request.args.get('near_threshold', 6))
+        limit = int(request.args.get('limit', 5000))
+    except ValueError:
+        abort(400, 'Invalid duplicate scan parameter')
+
+    try:
+        root_path = resolve_requested_root(root_key, ASSET_ROOTS)
+    except Exception as e:
+        abort(400, str(e))
+
+    payload = scan_duplicate_assets(
+        root=root_path,
+        include_near=include_near,
+        near_threshold=near_threshold,
+        limit=limit,
+    )
+    return jsonify({'root': root_key, **payload})
+
+
+@app.route('/api/assets/duplicates/stream', methods=['GET'])
+def api_assets_duplicates_stream():
+    root_key = request.args.get('root')
+    include_near = request.args.get('include_near', 'false').lower() == 'true'
+    try:
+        near_threshold = int(request.args.get('near_threshold', 6))
+        limit = int(request.args.get('limit', 5000))
+    except ValueError:
+        abort(400, 'Invalid duplicate scan parameter')
+
+    try:
+        root_path = resolve_requested_root(root_key, ASSET_ROOTS)
+    except Exception as e:
+        abort(400, str(e))
+
+    events: queue.Queue[dict[str, Any]] = queue.Queue()
+
+    def progress_callback(progress: dict[str, Any]) -> None:
+        events.put({'type': 'progress', 'progress': progress})
+
+    def worker() -> None:
+        try:
+            payload = scan_duplicate_assets(
+                root=root_path,
+                include_near=include_near,
+                near_threshold=near_threshold,
+                limit=limit,
+                progress_callback=progress_callback,
+            )
+            events.put({'type': 'result', 'root': root_key, **payload})
+        except Exception as exc:
+            logger.exception('Duplicate scan failed')
+            events.put({'type': 'error', 'error': str(exc)})
+        finally:
+            events.put({'type': 'done'})
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    @stream_with_context
+    def generate():
+        while True:
+            event = events.get()
+            yield json.dumps(event) + "\n"
+            if event.get('type') == 'done':
+                break
+
+    return Response(generate(), mimetype='application/x-ndjson')
 
 @app.route('/api/assets/file', methods=['GET'])
 def api_assets_file():
@@ -720,6 +953,46 @@ def api_assets_details():
     except Exception as e:
         abort(400, str(e))
     return jsonify({'asset': item})
+
+
+@app.route('/api/assets/metadata/repair', methods=['POST'])
+def api_assets_repair_metadata():
+    payload = request.get_json(silent=True) or {}
+    path = payload.get('path')
+    overwrite = payload.get('overwrite', False) is True
+    try:
+        abs_path = resolve_requested_file(path, ASSET_ROOTS)
+        root = find_root_for_path(abs_path, ASSET_ROOTS)
+        if not root:
+            raise PermissionError('File not in allowed roots')
+        result = repair_png_bubba_metadata(abs_path, overwrite=overwrite)
+        item = build_asset_item(abs_path, root.path, include_metadata=True)
+    except Exception as e:
+        abort(400, str(e))
+    return jsonify({'result': result, 'asset': item})
+
+
+@app.route('/api/assets/open-folder', methods=['POST'])
+def api_assets_open_folder():
+    payload = request.get_json(silent=True) or {}
+    path = payload.get('path')
+    try:
+        abs_path = resolve_requested_file(path, ASSET_ROOTS)
+    except Exception as e:
+        abort(400, str(e))
+
+    folder = os.path.dirname(abs_path)
+    try:
+        if os.name == 'nt':
+            os.startfile(folder)  # type: ignore[attr-defined]
+        elif sys.platform == 'darwin':
+            subprocess.Popen(['open', folder])
+        else:
+            subprocess.Popen(['xdg-open', folder])
+    except Exception as e:
+        logger.exception('Open folder failed for %s', folder)
+        abort(500, str(e))
+    return jsonify({'opened': folder})
 
 if __name__ == '__main__':
     logger.info('Bubba Asset Viewer server started on http://localhost:5001')
