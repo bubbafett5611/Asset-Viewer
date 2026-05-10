@@ -49,3 +49,9 @@ Desktop.ini
 # Local scratch/output directories
 tmp_compare/
 .vscode/
+
+# Frontend tooling dependencies
+node_modules/
+
+# Local test scratch directory used by CI/check commands
+.pytest_tmp/

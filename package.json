@@ -1,0 +1,17 @@
+{
+  "name": "asset-viewer-standalone-frontend-tools",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Frontend formatting and linting tools for Asset Viewer",
+  "scripts": {
+    "lint:frontend": "eslint \"frontend/**/*.js\"",
+    "format:frontend": "prettier --write \"frontend/**/*.{js,css,html}\"",
+    "format:frontend:check": "prettier --check \"frontend/**/*.{js,css,html}\""
+  },
+  "devDependencies": {
+    "eslint": "^9.38.0",
+    "globals": "^16.5.0",
+    "prettier": "^3.6.2"
+  }
+}

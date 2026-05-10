@@ -46,6 +46,36 @@ Running tests
 python -m pytest -q
 ```
 
+Quality checks (Phase 1)
+
+Install Python quality tools if you have not already:
+
+```bash
+pip install -r requirements.txt
+```
+
+Run backend lint + type checks + tests:
+
+```bash
+python -m ruff check backend tests
+python -m mypy
+python -m pytest --basetemp .pytest_tmp -q
+```
+
+Short command set for daily use:
+
+```bash
+python -m ruff check backend tests && python -m mypy && python -m pytest --basetemp .pytest_tmp -q
+```
+
+Frontend formatter/linter setup:
+
+```bash
+npm install
+npm run lint:frontend
+npm run format:frontend
+```
+
 The optional browser smoke test in [tests/test_browser_smoke.py](tests/test_browser_smoke.py) runs when Playwright is installed; otherwise pytest skips it cleanly. If tests fail, run the failing test file directly to see full output.
 
 Contributing

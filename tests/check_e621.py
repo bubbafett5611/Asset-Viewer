@@ -1,4 +1,4 @@
-import requests, json, urllib.parse
+import requests, urllib.parse
 headers={'User-Agent':'BubbaAssetViewer/1.0 (contact:none@example.com)'}
 queries=["solo order:score","solo","solo -type:webm -type:mp4 -type:gif date:month order:score"]
 for q in queries:
