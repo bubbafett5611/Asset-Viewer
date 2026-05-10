@@ -2,13 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from io import BytesIO
 import hashlib
 import json
 import logging
 import os
 import re
-import shutil
 import struct
 import time
 from typing import Any, Callable
@@ -520,41 +518,21 @@ def _parse_png_metadata(path: str) -> dict[str, Any]:
 
 
 def _detect_metadata_badges(extension: str, path: str) -> list[dict[str, str]]:
-	if extension.lower() != ".png" or Image is None:
-		return []
+	from backend.services.asset_viewer_metadata import detect_metadata_badges as _detect
 
-	try:
-		with Image.open(path) as img:
-			info = getattr(img, "info", {}) or {}
-	except Exception:
-		return []
-
-	if not isinstance(info, dict):
-		return []
-
-	keys = {str(key).lower() for key in info.keys()}
-	badges: list[dict[str, str]] = []
-	for key in (BADGE_KEY_BUBBA_METADATA, BADGE_KEY_WORKFLOW, BADGE_KEY_PARAMETERS):
-		if key in keys:
-			badges.append({"key": key, "label": METADATA_BADGE_LABELS[key]})
-	return badges
+	return _detect(extension, path, image_module=Image)
 
 
 def _metadata_badge_keys_for_file(extension: str, path: str) -> set[str]:
-	return {badge["key"] for badge in _detect_metadata_badges(extension, path)}
+	from backend.services.asset_viewer_metadata import metadata_badge_keys_for_file as _keys
+
+	return _keys(extension, path, image_module=Image)
 
 
 def _has_invalid_bubba_metadata(path: str) -> bool:
-	if Image is None:
-		return False
-	try:
-		with Image.open(path) as img:
-			info = getattr(img, "info", {}) or {}
-	except Exception:
-		return False
-	if "bubba_metadata" not in info:
-		return False
-	return _parse_json_text(info.get("bubba_metadata")) is None
+	from backend.services.asset_viewer_metadata import has_invalid_bubba_metadata as _has_invalid
+
+	return _has_invalid(path, image_module=Image)
 
 
 def repair_png_bubba_metadata(path: str, overwrite: bool = False) -> dict[str, Any]:
@@ -600,109 +578,49 @@ def repair_png_bubba_metadata(path: str, overwrite: bool = False) -> dict[str, A
 
 
 def build_metadata_report(root: str, limit: int = 10000) -> MetadataReport:
-	normalized_root = os.path.abspath(root)
-	assets = scan_assets(root=normalized_root, limit=limit, include_metadata=False, sort_by="name", sort_dir="asc")
-	stats = MetadataReport(total_assets=len(assets))
-	for asset in assets:
-		extension = str(asset.get("extension") or "").lower()
-		path = str(asset.get("path") or "")
-		if extension == ".png":
-			stats.png_assets += 1
-		keys = {badge.get("key") for badge in asset.get("metadata_badges", []) if isinstance(badge, dict)}
-		if BADGE_KEY_BUBBA_METADATA in keys:
-			stats.bubba_metadata += 1
-		if BADGE_KEY_WORKFLOW in keys:
-			stats.workflow += 1
-		if BADGE_KEY_PARAMETERS in keys:
-			stats.parameters += 1
-		if extension == ".png" and not keys:
-			stats.no_tracked_metadata += 1
-		if extension == ".png" and path and _has_invalid_bubba_metadata(path):
-			stats.invalid_bubba_metadata += 1
-	return stats
+	from backend.services.asset_viewer_metadata import build_metadata_report as _build_metadata_report
+
+	return _build_metadata_report(root, MetadataReport, scan_assets, image_module=Image, limit=limit)
 
 
 def metadata_health_report(root: str, limit: int = 10000, refresh: bool = False, cache_only: bool = False) -> tuple[MetadataReport | None, bool]:
-	if not refresh:
-		cached = _load_report_cache(root, METADATA_REPORT_FILE, MetadataReport)
-		if isinstance(cached, MetadataReport):
-			return cached, True
-		if cache_only:
-			return None, False
-	report = build_metadata_report(root, limit=limit)
-	_save_report_cache(root, METADATA_REPORT_FILE, report)
-	return report, False
+	from backend.services.asset_viewer_metadata import metadata_health_report as _metadata_health_report
+
+	return _metadata_health_report(
+		root,
+		MetadataReport,
+		scan_assets,
+		_is_path_within_root,
+		image_module=Image,
+		limit=limit,
+		refresh=refresh,
+		cache_only=cache_only,
+	)
 
 
 def build_folder_stats_report(root: str) -> FolderStatsReport:
-	normalized_root = os.path.abspath(root)
-	stats = FolderStatsReport()
-	if not os.path.isdir(normalized_root):
-		return stats
+	from backend.services.asset_viewer_metadata import build_folder_stats_report as _build_folder_stats_report
 
-	for current_dir, dirnames, filenames in os.walk(normalized_root):
-		dirnames[:] = [name for name in dirnames if name not in {".asset_viewer_trash", REPORT_CACHE_DIRNAME}]
-		for filename in filenames:
-			abs_path = os.path.join(current_dir, filename)
-			if not _is_path_within_root(abs_path, normalized_root):
-				continue
-			try:
-				stat = os.stat(abs_path)
-			except OSError:
-				continue
-			extension = Path(filename).suffix.lower()
-			stats.total_files += 1
-			stats.total_bytes += int(stat.st_size)
-			if extension in ALLOWED_UPLOAD_IMAGE_EXTENSIONS:
-				stats.image_files += 1
-			elif extension in MODEL_EXTENSIONS:
-				stats.model_files += 1
-			else:
-				stats.other_files += 1
-
-			if extension == ".png":
-				keys = _metadata_badge_keys_for_file(extension, abs_path)
-				if BADGE_KEY_BUBBA_METADATA in keys:
-					stats.bubba_metadata += 1
-				if BADGE_KEY_WORKFLOW in keys:
-					stats.workflow += 1
-				if BADGE_KEY_PARAMETERS in keys:
-					stats.parameters += 1
-				if not keys:
-					stats.no_tracked_metadata += 1
-				if _has_invalid_bubba_metadata(abs_path):
-					stats.invalid_bubba_metadata += 1
-	return stats
+	return _build_folder_stats_report(root, FolderStatsReport, _is_path_within_root, image_module=Image)
 
 
 def folder_stats_report(root: str, refresh: bool = False, cache_only: bool = False) -> tuple[FolderStatsReport | None, bool]:
-	if not refresh:
-		cached = _load_report_cache(root, FOLDER_STATS_REPORT_FILE, FolderStatsReport)
-		if isinstance(cached, FolderStatsReport):
-			return cached, True
-		if cache_only:
-			return None, False
-	report = build_folder_stats_report(root)
-	_save_report_cache(root, FOLDER_STATS_REPORT_FILE, report)
-	return report, False
+	from backend.services.asset_viewer_metadata import folder_stats_report as _folder_stats_report
+
+	return _folder_stats_report(
+		root,
+		FolderStatsReport,
+		_is_path_within_root,
+		image_module=Image,
+		refresh=refresh,
+		cache_only=cache_only,
+	)
 
 
 def move_file_to_trash(path: str, root: str) -> str:
-	normalized_root = os.path.abspath(root)
-	abs_path = os.path.abspath(path)
-	if not _is_path_within_root(abs_path, normalized_root):
-		raise PermissionError("Requested file is outside selected root.")
-	trash_root = os.path.join(normalized_root, ".asset_viewer_trash", time.strftime("%Y%m%d-%H%M%S"))
-	rel_path = os.path.relpath(abs_path, normalized_root)
-	destination = os.path.join(trash_root, rel_path)
-	os.makedirs(os.path.dirname(destination), exist_ok=True)
-	base, ext = os.path.splitext(destination)
-	counter = 1
-	while os.path.exists(destination):
-		destination = f"{base}_{counter}{ext}"
-		counter += 1
-	shutil.move(abs_path, destination)
-	return destination
+	from backend.services.asset_viewer_trash import move_file_to_trash as _move_file_to_trash
+
+	return _move_file_to_trash(path, root, _is_path_within_root)
 
 
 def _flatten_to_search_text(value: Any) -> str:
@@ -720,155 +638,51 @@ def _flatten_to_search_text(value: Any) -> str:
 
 
 def summarize_metadata(extension: str, path: str) -> dict[str, Any]:
-	ext = extension.lower()
-	if ext == ".safetensors":
-		metadata = _parse_safetensors_header(path)
-		summary = {
-			"format": "safetensors",
-			"keys": sorted([str(k) for k in metadata.keys()]),
-		}
-		if metadata:
-			summary["metadata"] = {str(k): _sanitize_text(v, max_len=800) for k, v in metadata.items()}
-		return summary
+	from backend.services.asset_viewer_metadata import summarize_metadata as _summarize_metadata
 
-	if ext == ".png":
-		metadata = _parse_png_metadata(path)
-		summary = {
-			"format": "png",
-			"keys": sorted([str(k) for k in metadata.keys()]),
-		}
-		if metadata:
-			summary["metadata"] = metadata
-		return summary
-
-	return {}
+	return _summarize_metadata(extension, path, image_module=Image)
 
 
 def discover_asset_roots() -> list[AssetRoot]:
-	roots: list[AssetRoot] = []
-	seen: set[str] = set()
+	from backend.services.asset_viewer_roots import discover_asset_roots as _discover_asset_roots
 
-	try:
-		import folder_paths  # type: ignore
-	except Exception as e:
-		logger.info("Could not import folder_paths: %s", e)
-		folder_paths = None
-
-	if folder_paths is not None:
-		for key, label, getter_name in [
-			("input", "Comfy Input", "get_input_directory"),
-			("output", "Comfy Output", "get_output_directory"),
-		]:
-			try:
-				getter = getattr(folder_paths, getter_name)
-				folder = getter()
-				logger.debug("%s returned: %s", getter_name, folder)
-			except Exception as e:
-				logger.warning("Error calling %s: %s", getter_name, e)
-				folder = None
-			if not folder:
-				continue
-			real = _safe_real_path(folder)
-			if real in seen or not os.path.isdir(folder):
-				logger.debug("Skipping folder (already seen or not a dir): %s", folder)
-				continue
-			seen.add(real)
-			roots.append(AssetRoot(key=key, label=label, path=os.path.abspath(folder)))
-
-	if not roots:
-		fallback = os.getcwd()
-		logger.info("No asset roots found, using fallback: %s", fallback)
-		roots.append(AssetRoot(key="cwd", label="Current Directory", path=os.path.abspath(fallback)))
-
-	logger.info("Discovered %d asset roots.", len(roots))
-	return roots
+	return [AssetRoot(key=key, label=label, path=path) for key, label, path in _discover_asset_roots(logger)]
 
 
 def resolve_requested_root(requested_root: str | None, allowed_roots: list[AssetRoot]) -> str:
-	if not allowed_roots:
-		raise ValueError("No asset roots available.")
+	from backend.services.asset_viewer_roots import resolve_requested_root as _resolve_requested_root
 
-	if not requested_root:
-		return allowed_roots[0].path
-
-	requested = requested_root.strip()
-	if not requested:
-		return allowed_roots[0].path
-
-	root_by_path = {os.path.abspath(root.path): root for root in allowed_roots}
-	requested_abs = os.path.abspath(requested)
-	if requested_abs in root_by_path:
-		return requested_abs
-
-	for root in allowed_roots:
-		if requested == root.key:
-			return root.path
-
-	raise ValueError("Requested root is not allowed.")
+	serializable_roots = [(root.key, root.label, root.path) for root in allowed_roots]
+	return _resolve_requested_root(requested_root, serializable_roots)
 
 
 def resolve_requested_file(requested_path: str | None, allowed_roots: list[AssetRoot]) -> str:
-	if not allowed_roots:
-		raise ValueError("No asset roots available.")
+	from backend.services.asset_viewer_roots import resolve_requested_file as _resolve_requested_file
 
-	raw = str(requested_path or "").strip()
-	if not raw:
-		raise ValueError("Missing file path.")
-
-	normalized = os.path.abspath(raw)
-	if not os.path.isfile(normalized):
-		raise FileNotFoundError("File does not exist.")
-
-	for root in allowed_roots:
-		if _is_path_within_root(normalized, root.path):
-			return normalized
-
-	raise PermissionError("Requested file is outside allowed roots.")
+	serializable_roots = [(root.key, root.label, root.path) for root in allowed_roots]
+	return _resolve_requested_file(requested_path, serializable_roots)
 
 
 def find_root_for_path(path: str, allowed_roots: list[AssetRoot]) -> AssetRoot | None:
-	normalized = os.path.abspath(path)
-	for root in allowed_roots:
-		if _is_path_within_root(normalized, root.path):
-			return root
-	return None
+	from backend.services.asset_viewer_roots import find_root_for_path as _find_root_for_path
+
+	serializable_roots = [(root.key, root.label, root.path) for root in allowed_roots]
+	found = _find_root_for_path(path, serializable_roots)
+	if not found:
+		return None
+	return AssetRoot(key=found[0], label=found[1], path=found[2])
 
 
 def sanitize_upload_filename(filename: str, fallback: str = "upload.png") -> str:
-	raw_name = os.path.basename(str(filename or "").strip())
-	raw_name = raw_name.replace("\x00", "")
-	raw_name = raw_name.replace("/", "_").replace("\\", "_")
-	raw_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", raw_name)
+	from backend.services.asset_viewer_roots import sanitize_upload_filename as _sanitize_upload_filename
 
-	if not raw_name or raw_name in {".", ".."}:
-		raw_name = fallback
-
-	stem = Path(raw_name).stem or "upload"
-	ext = Path(raw_name).suffix.lower()
-	if ext not in ALLOWED_UPLOAD_IMAGE_EXTENSIONS:
-		ext = ".png"
-
-	safe = f"{stem}{ext}"
-	if len(safe) <= 180:
-		return safe
-
-	trimmed_stem = stem[: max(1, 180 - len(ext))]
-	return f"{trimmed_stem}{ext}"
+	return _sanitize_upload_filename(filename, fallback=fallback)
 
 
 def make_unique_destination_path(root: str, filename: str) -> str:
-	normalized_root = os.path.abspath(root)
-	safe_name = sanitize_upload_filename(filename)
-	base_stem = Path(safe_name).stem
-	base_ext = Path(safe_name).suffix.lower()
+	from backend.services.asset_viewer_roots import make_unique_destination_path as _make_unique_destination_path
 
-	candidate = os.path.join(normalized_root, safe_name)
-	counter = 1
-	while os.path.exists(candidate):
-		candidate = os.path.join(normalized_root, f"{base_stem}_{counter}{base_ext}")
-		counter += 1
-
-	return candidate
+	return _make_unique_destination_path(root, filename)
 
 
 def build_asset_item(path: str, root: str, include_metadata: bool = False) -> dict[str, Any]:
@@ -902,23 +716,9 @@ def build_asset_item(path: str, root: str, include_metadata: bool = False) -> di
 
 
 def generate_thumbnail_bytes(path: str, max_size: int = 256) -> bytes | None:
-	if Image is None:
-		return None
+	from backend.services.asset_viewer_thumbnails import generate_thumbnail_bytes as _generate_thumbnail_bytes
 
-	try:
-		size = max(32, min(int(max_size), 1024))
-	except Exception:
-		size = 256
-
-	try:
-		with Image.open(path) as img:
-			image = img.convert("RGBA")
-			image.thumbnail((size, size), Image.Resampling.LANCZOS)
-			buffer = BytesIO()
-			image.save(buffer, format="PNG", optimize=True)
-			return buffer.getvalue()
-	except Exception:
-		return None
+	return _generate_thumbnail_bytes(path, max_size=max_size, image_module=Image)
 
 
 def _sha256_file(path: str, chunk_size: int = 1024 * 1024) -> str | None:
@@ -1008,139 +808,19 @@ def scan_duplicate_assets(
 	limit: int = 5000,
 	progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-	normalized_root = os.path.abspath(root)
-	limit = max(1, min(int(limit), 10000))
-	near_threshold = max(0, min(int(near_threshold), 16))
+	from backend.services.asset_viewer_duplicates import scan_duplicate_assets as _scan_duplicate_assets
 
-	def report(stage: str, completed: int, total: int, percent: int, message: str) -> None:
-		if progress_callback is None:
-			return
-		progress_callback({
-			"stage": stage,
-			"completed": completed,
-			"total": total,
-			"percent": max(0, min(int(percent), 100)),
-			"message": message,
-		})
-
-	report("collecting", 0, 0, 2, "Collecting files...")
-	assets = scan_assets(
-		root=normalized_root,
+	return _scan_duplicate_assets(
+		root,
+		scan_assets,
+		build_asset_item,
+		NEAR_DUPLICATE_IMAGE_EXTENSIONS,
+		image_module=Image,
+		include_near=include_near,
+		near_threshold=near_threshold,
 		limit=limit,
-		include_metadata=False,
-		sort_by="name",
-		sort_dir="asc",
+		progress_callback=progress_callback,
 	)
-	report("hashing", 0, len(assets), 5, f"Scanning {len(assets)} file(s)...")
-
-	content_hashes: dict[str, list[str]] = {}
-	pixel_hashes: dict[str, list[str]] = {}
-	content_hash_by_path: dict[str, str] = {}
-	pixel_hash_by_path: dict[str, str] = {}
-	dhash_by_path: dict[str, int] = {}
-
-	for index, asset in enumerate(assets, start=1):
-		path = str(asset.get("path") or "")
-		extension = str(asset.get("extension") or "").lower()
-		if not path:
-			continue
-
-		content_hash = _sha256_file(path)
-		if content_hash:
-			content_hash_by_path[path] = content_hash
-			content_hashes.setdefault(content_hash, []).append(path)
-
-		if extension in NEAR_DUPLICATE_IMAGE_EXTENSIONS:
-			pixel_hash = _pixel_hash(path)
-			if pixel_hash:
-				pixel_hash_by_path[path] = pixel_hash
-				pixel_hashes.setdefault(pixel_hash, []).append(path)
-			if include_near:
-				dhash_value = _dhash(path)
-				if dhash_value is not None:
-					dhash_by_path[path] = dhash_value
-
-		if index == len(assets) or index == 1 or index % 10 == 0:
-			percent = 5 + round((index / max(len(assets), 1)) * 65)
-			report("hashing", index, len(assets), percent, f"Checked {index} of {len(assets)} file(s)...")
-
-	groups: list[dict[str, Any]] = []
-	report("grouping", 0, 0, 72, "Grouping exact and same-pixel matches...")
-	for key, paths in content_hashes.items():
-		if len(paths) > 1:
-			_append_duplicate_group(groups, "exact", key, paths, normalized_root)
-
-	for key, paths in pixel_hashes.items():
-		if len(paths) > 1 and len({content_hash_by_path.get(path, "") for path in paths}) > 1:
-			_append_duplicate_group(groups, "pixel", key, paths, normalized_root)
-
-	if include_near and len(dhash_by_path) > 1:
-		paths = list(dhash_by_path.keys())
-		total_pairs = max(1, (len(paths) * (len(paths) - 1)) // 2)
-		compared_pairs = 0
-		parent = {path: path for path in paths}
-		group_distance: dict[str, int] = {}
-
-		def find(path: str) -> str:
-			while parent[path] != path:
-				parent[path] = parent[parent[path]]
-				path = parent[path]
-			return path
-
-		def union(left: str, right: str, distance: int) -> None:
-			left_root = find(left)
-			right_root = find(right)
-			if left_root == right_root:
-				group_distance[left_root] = max(group_distance.get(left_root, distance), distance)
-				return
-			parent[right_root] = left_root
-			group_distance[left_root] = max(group_distance.get(left_root, 0), group_distance.get(right_root, 0), distance)
-
-		for left_index, left in enumerate(paths):
-			for right in paths[left_index + 1 :]:
-				if pixel_hash_by_path.get(left) and pixel_hash_by_path.get(left) == pixel_hash_by_path.get(right):
-					compared_pairs += 1
-					continue
-				distance = _hamming_distance(dhash_by_path[left], dhash_by_path[right])
-				if distance <= near_threshold:
-					union(left, right, distance)
-				compared_pairs += 1
-				if compared_pairs == 1 or compared_pairs == total_pairs or compared_pairs % 1000 == 0:
-					percent = 72 + round((compared_pairs / total_pairs) * 23)
-					report("comparing", compared_pairs, total_pairs, percent, f"Compared {compared_pairs} of {total_pairs} image pair(s)...")
-
-		near_groups: dict[str, list[str]] = {}
-		for path in paths:
-			near_groups.setdefault(find(path), []).append(path)
-
-		for root_key, paths_in_group in near_groups.items():
-			if len(paths_in_group) < 2:
-				continue
-			if len({pixel_hash_by_path.get(path, "") for path in paths_in_group}) <= 1:
-				continue
-			_append_duplicate_group(
-				groups,
-				"near",
-				f"dhash:{root_key}",
-				paths_in_group,
-				normalized_root,
-				distance=group_distance.get(find(root_key), 0),
-			)
-	else:
-		report("grouping", 0, 0, 95, "Finishing duplicate groups...")
-
-	groups.sort(key=lambda group: (str(group.get("kind") or ""), -int(group.get("count") or 0), str(group.get("key") or "")))
-	summary = {
-		"groups": len(groups),
-		"assets": sum(int(group.get("count") or 0) for group in groups),
-		"exact_groups": sum(1 for group in groups if group.get("kind") == "exact"),
-		"pixel_groups": sum(1 for group in groups if group.get("kind") == "pixel"),
-		"near_groups": sum(1 for group in groups if group.get("kind") == "near"),
-		"scanned_assets": len(assets),
-		"near_enabled": bool(include_near),
-	}
-	report("complete", len(groups), len(groups), 100, f"Found {len(groups)} duplicate group(s).")
-	return {"groups": groups, "summary": summary}
 
 
 def scan_assets(
@@ -1159,178 +839,30 @@ def scan_assets(
 	metadata_mode: str = METADATA_MODE_ALL,
 	metadata_badge_filter: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-	normalized_root = os.path.abspath(root)
-	requested_exts = [ext.lower() for ext in (extensions or []) if ext.strip()]
-	requested_exts = [ext if ext.startswith(".") else f".{ext}" for ext in requested_exts]
+	from backend.services.asset_viewer_scanning import scan_assets as _scan_assets
 
-	if not os.path.isdir(normalized_root):
-		return []
-
-	q = query.strip().lower()
-	limit = max(1, min(int(limit), 3000))
-	offset = max(0, int(offset))
-
-	requested_sort_by = str(sort_by or "name").strip().lower()
-	if requested_sort_by not in {"name", "modified", "size", "metadata"}:
-		requested_sort_by = "name"
-
-	requested_sort_dir = str(sort_dir or "asc").strip().lower()
-	if requested_sort_dir not in {"asc", "desc"}:
-		requested_sort_dir = "asc"
-
-	requested_metadata_mode = str(metadata_mode or METADATA_MODE_ALL).strip().lower()
-	if requested_metadata_mode not in VALID_METADATA_MODES:
-		requested_metadata_mode = METADATA_MODE_ALL
-	requested_badges = {str(item).strip().lower() for item in (metadata_badge_filter or []) if str(item).strip()}
-	requested_badges = requested_badges.intersection(VALID_METADATA_BADGE_KEYS)
-
-	min_size = int(min_size_bytes) if isinstance(min_size_bytes, int) else None
-	if min_size is not None and min_size < 0:
-		min_size = 0
-
-	max_size = int(max_size_bytes) if isinstance(max_size_bytes, int) else None
-	if max_size is not None and max_size < 0:
-		max_size = None
-
-	modified_after = float(modified_after_ts) if isinstance(modified_after_ts, (int, float)) else None
-
-	# Fast path keeps streaming behavior for default sort.
-	stream_fast_path = requested_sort_by == "name" and requested_sort_dir == "asc"
-
-	files: list[dict[str, Any]] = []
-	matched = 0
-
-	for current_dir, dirnames, filenames in os.walk(normalized_root):
-		dirnames[:] = [name for name in dirnames if name not in {".asset_viewer_trash", REPORT_CACHE_DIRNAME}]
-		dirnames.sort(key=str.lower)
-		filenames.sort(key=str.lower)
-		for filename in filenames:
-			extension = Path(filename).suffix.lower()
-			if requested_exts and extension not in requested_exts:
-				continue
-
-			abs_path = os.path.join(current_dir, filename)
-			if not _is_path_within_root(abs_path, normalized_root):
-				continue
-
-			rel_path = os.path.relpath(abs_path, normalized_root)
-			metadata_summary: dict[str, Any] = {}
-			supports_metadata = extension in {".safetensors", ".png"}
-			base_search_blob = f"{filename} {rel_path}".lower()
-
-			needs_metadata_for_query = bool(q and search_in_metadata and supports_metadata and q not in base_search_blob)
-			needs_metadata_for_payload = bool(include_metadata and supports_metadata)
-			if needs_metadata_for_query or needs_metadata_for_payload:
-				metadata_summary = summarize_metadata(extension, abs_path)
-
-			if q:
-				if q not in base_search_blob:
-					if not metadata_summary:
-						continue
-					metadata_blob = _flatten_to_search_text(metadata_summary).lower()
-					if q not in metadata_blob:
-						continue
-
-			try:
-				stat = os.stat(abs_path)
-			except OSError:
-				continue
-
-			size_bytes = int(stat.st_size)
-			modified_ts = float(stat.st_mtime)
-
-			if min_size is not None and size_bytes < min_size:
-				continue
-			if max_size is not None and size_bytes > max_size:
-				continue
-			if modified_after is not None and modified_ts < modified_after:
-				continue
-
-			if requested_metadata_mode != METADATA_MODE_ALL:
-				if supports_metadata:
-					if not metadata_summary:
-						metadata_summary = summarize_metadata(extension, abs_path)
-					metadata_obj = metadata_summary.get("metadata") if isinstance(metadata_summary.get("metadata"), dict) else {}
-
-					# generation (ComfyUI prompt chunk)
-					generation_obj = metadata_obj.get("generation") if isinstance(metadata_obj, dict) else {}
-
-					# bubba metadata chunk
-					bubba_obj = metadata_obj.get("bubba_metadata") if isinstance(metadata_obj, dict) else None
-					has_bubba_metadata = bool(bubba_obj)
-					has_generation = bool(isinstance(generation_obj, dict) and generation_obj) or _has_bubba_generation_metadata(bubba_obj)
-
-					# workflow chunk (stored as non-empty string)
-					workflow_val = metadata_obj.get("workflow") if isinstance(metadata_obj, dict) else None
-					has_workflow = bool(workflow_val and str(workflow_val).strip())
-				else:
-					has_generation = False
-					has_bubba_metadata = False
-					has_workflow = False
-
-				if requested_metadata_mode == METADATA_MODE_HAS_GENERATION and not has_generation:
-					continue
-				if requested_metadata_mode == METADATA_MODE_MISSING_GENERATION and has_generation:
-					continue
-				if requested_metadata_mode == METADATA_MODE_HAS_BUBBA_METADATA and not has_bubba_metadata:
-					continue
-				if requested_metadata_mode == METADATA_MODE_MISSING_BUBBA_METADATA and has_bubba_metadata:
-					continue
-				if requested_metadata_mode == METADATA_MODE_HAS_WORKFLOW and not has_workflow:
-					continue
-				if requested_metadata_mode == METADATA_MODE_MISSING_WORKFLOW and has_workflow:
-					continue
-
-			metadata_badges = _detect_metadata_badges(extension, abs_path)
-			if requested_badges:
-				badge_keys = {badge["key"] for badge in metadata_badges}
-				if BADGE_KEY_NO_TRACKED_METADATA in requested_badges:
-					if badge_keys:
-						continue
-				elif not requested_badges.issubset(badge_keys):
-					continue
-
-			item: dict[str, Any] = {
-				"name": filename,
-				"path": abs_path,
-				"relative_path": rel_path,
-				"extension": extension,
-				"size_bytes": size_bytes,
-				"modified_ts": modified_ts,
-			}
-			if metadata_badges:
-				item["metadata_badges"] = metadata_badges
-
-			if include_metadata and metadata_summary:
-				item["metadata"] = metadata_summary
-
-			if stream_fast_path:
-				if matched < offset:
-					matched += 1
-					continue
-
-				matched += 1
-				files.append(item)
-				if len(files) >= limit:
-					return files
-				continue
-
-			files.append(item)
-
-	if stream_fast_path:
-		return files
-
-	def _sort_key(item: dict[str, Any]) -> tuple[Any, ...]:
-		name_key = str(item.get("name") or "").lower()
-		path_key = str(item.get("relative_path") or "").lower()
-		if requested_sort_by == "modified":
-			return (float(item.get("modified_ts") or 0.0), name_key, path_key)
-		if requested_sort_by == "size":
-			return (int(item.get("size_bytes") or 0), name_key, path_key)
-		if requested_sort_by == "metadata":
-			has_metadata = 1 if item.get("metadata") else 0
-			return (has_metadata, name_key, path_key)
-		return (name_key, path_key)
-
-	files.sort(key=_sort_key, reverse=requested_sort_dir == "desc")
-	return files[offset : offset + limit]
+	return _scan_assets(
+		root=root,
+		summarize_metadata_fn=summarize_metadata,
+		detect_metadata_badges_fn=_detect_metadata_badges,
+		has_bubba_generation_metadata_fn=_has_bubba_generation_metadata,
+		is_path_within_root_fn=_is_path_within_root,
+		report_cache_dirname=REPORT_CACHE_DIRNAME,
+		metadata_mode_all=METADATA_MODE_ALL,
+		valid_metadata_modes=VALID_METADATA_MODES,
+		badge_key_no_tracked_metadata=BADGE_KEY_NO_TRACKED_METADATA,
+		valid_metadata_badge_keys=VALID_METADATA_BADGE_KEYS,
+		query=query,
+		extensions=extensions,
+		limit=limit,
+		include_metadata=include_metadata,
+		offset=offset,
+		search_in_metadata=search_in_metadata,
+		sort_by=sort_by,
+		sort_dir=sort_dir,
+		min_size_bytes=min_size_bytes,
+		max_size_bytes=max_size_bytes,
+		modified_after_ts=modified_after_ts,
+		metadata_mode=metadata_mode,
+		metadata_badge_filter=metadata_badge_filter,
+	)
