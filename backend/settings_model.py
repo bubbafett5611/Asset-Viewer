@@ -1,8 +1,18 @@
 from __future__ import annotations
 
-from enum import StrEnum
+import sys
+from enum import Enum
 from pathlib import Path
 from typing import Any
+
+# StrEnum was added in Python 3.11; provide fallback for Python 3.10
+if sys.version_info >= (3, 11):
+	from enum import StrEnum
+else:
+	class StrEnum(str, Enum):
+		"""Enum where members are also strings; fallback for Python < 3.11."""
+		def __str__(self):
+			return str(self.value)
 
 from pydantic import BaseModel, Field
 from pydantic_settings import (
