@@ -146,6 +146,10 @@ export function useAssetViewerState() {
     const assetScrollTop = ref(0);
     const assetViewportHeight = ref(0);
     const assetListWidth = ref(0);
+    const duplicateSettings = reactive({
+        includeNear: duplicateIncludeNear,
+        nearThreshold: duplicateNearThreshold,
+    });
 
     const tags = ref([]);
     const tagCategoriesList = ref([]);
@@ -362,6 +366,20 @@ export function useAssetViewerState() {
 
     function onAssetListScroll() {
         assetScrollTop.value = assetListRef.value?.scrollTop || 0;
+    }
+
+    function setAssetListRef(element) {
+        assetListRef.value = element;
+        if (resizeObserver) {
+            resizeObserver.disconnect();
+            if (assetListRef.value) {
+                resizeObserver.observe(assetListRef.value);
+            }
+        }
+    }
+
+    function setSearchInputRef(element) {
+        searchInputRef.value = element;
     }
 
     function blurActionButton(event) {
@@ -967,7 +985,10 @@ export function useAssetViewerState() {
         assetListStyle,
         densityClass,
         assetListRef,
+        setAssetListRef,
         searchInputRef,
+        setSearchInputRef,
+        duplicateSettings,
         shouldVirtualize,
         visibleAssets,
         virtualSpacerStyle,
