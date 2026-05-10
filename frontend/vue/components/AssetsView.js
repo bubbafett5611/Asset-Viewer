@@ -182,8 +182,8 @@ export const AssetsView = {
         },
     },
     template: `
-        <div class="layout tab-panel" :style="layoutStyle">
-            <section class="panel">
+        <div class="layout assets-layout tab-panel" :style="layoutStyle">
+            <section class="panel assets-panel">
                 <div class="controls assets-controls">
                     <div class="assets-main-row">
                         <div class="field field--narrow">
@@ -238,8 +238,8 @@ export const AssetsView = {
                     </div>
                 </div>
 
-                <div class="results">
-                    <div class="meta-row">
+                <div class="results assets-results">
+                    <div class="meta-row assets-meta-row">
                         <div class="meta-group">
                             <span class="status-dot" aria-hidden="true"></span>
                             <span>{{ statusText }}</span>

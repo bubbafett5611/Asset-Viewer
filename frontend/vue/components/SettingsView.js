@@ -51,7 +51,7 @@ export const SettingsView = {
         },
     },
     template: `
-        <div class="layout layout--single layout--utility tab-panel" :style="layoutStyle">
+        <div class="layout layout--single layout--utility settings-layout tab-panel" :style="layoutStyle">
             <section class="panel settings-panel">
                 <div class="settings-header">
                     <div>

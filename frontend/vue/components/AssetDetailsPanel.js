@@ -213,7 +213,7 @@ export const AssetDetailsPanel = {
         };
     },
     template: `
-        <aside class="panel details">
+        <aside class="panel asset-details-panel details">
             <div class="details-header">
                 <div class="details-title-row">
                     <h2>Media Details</h2>

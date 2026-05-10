@@ -135,9 +135,9 @@ export const DuplicatesView = {
         };
     },
     template: `
-        <div class="layout layout--single tab-panel" :style="layoutStyle">
-            <section class="panel">
-                <div class="controls duplicate-controls">
+        <div class="layout layout--single duplicates-layout tab-panel" :style="layoutStyle">
+            <section class="panel duplicates-panel">
+                <div class="controls duplicate-controls duplicates-controls">
                     <div class="field field--narrow">
                         <label for="duplicateRootSelect">Select Folder</label>
                         <select id="duplicateRootSelect" v-model="filters.root" class="select">
@@ -175,8 +175,8 @@ export const DuplicatesView = {
                     </button>
                 </div>
 
-                <div class="results duplicate-results">
-                    <div class="meta-row">
+                <div class="results duplicate-results duplicates-results">
+                    <div class="meta-row duplicates-meta-row">
                         <div class="meta-group">
                             <span class="status-dot" aria-hidden="true"></span>
                             <span>{{ duplicateStatusText }}</span>

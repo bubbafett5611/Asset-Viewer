@@ -90,8 +90,8 @@ export const TagsView = {
         },
     },
     template: `
-        <div class="layout tab-panel" :style="layoutStyle">
-            <section class="panel">
+        <div class="layout tags-layout tab-panel" :style="layoutStyle">
+            <section class="panel tags-panel">
                 <div class="controls tag-controls">
                     <div class="field tag-search-field">
                         <label for="tagSearchInput">Tag Search</label>
@@ -123,8 +123,8 @@ export const TagsView = {
                     </div>
                 </div>
 
-                <div class="results">
-                    <div class="meta-row">
+                <div class="results tags-results">
+                    <div class="meta-row tags-meta-row">
                         <div class="meta-group">
                             <span class="status-dot" aria-hidden="true"></span>
                             <span>{{ tagStatusText }}</span>

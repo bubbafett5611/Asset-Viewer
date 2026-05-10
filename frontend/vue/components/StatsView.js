@@ -39,7 +39,7 @@ export const StatsView = {
         },
     },
     template: `
-        <div class="layout layout--single layout--utility tab-panel" :style="layoutStyle">
+        <div class="layout layout--single layout--utility stats-layout tab-panel" :style="layoutStyle">
             <section class="panel stats-panel">
                 <div class="settings-header stats-header">
                     <div>

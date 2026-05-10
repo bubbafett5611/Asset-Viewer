@@ -32,7 +32,7 @@ export const TagDetailsPanel = {
     },
     emits: ["toggle-favorite"],
     template: `
-        <aside class="panel details">
+        <aside class="panel tag-details-panel details">
             <div class="details-header">
                 <h2>Tag Details</h2>
                 <p class="details-subtitle">Select a tag to inspect category, count, aliases, and examples.</p>
