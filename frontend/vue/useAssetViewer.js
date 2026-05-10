@@ -1,6 +1,9 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "https://unpkg.com/vue@3/dist/vue.esm-browser.prod.js";
 import { API, buildQuery, fileUrl, thumbUrl } from "/vue/api.js";
 import { useSelection } from "/vue/composables/useSelection.js";
+import { useTags } from "/vue/composables/useTags.js";
+import { useDuplicates } from "/vue/composables/useDuplicates.js";
+import { useKeyboardShortcuts } from "/vue/composables/useKeyboardShortcuts.js";
 
 const FAVORITES_KEY = "bubba_asset_viewer_tag_favorites";
 const RECENT_KEY = "bubba_asset_viewer_tag_recent";
@@ -152,7 +155,6 @@ export function useAssetViewerState() {
     const tagTotal = ref(0);
     const tagOffset = ref(0);
     const tagPageSize = 300;
-    let tagSearchTimer = null;
 
     const duplicateGroups = ref([]);
     const duplicateSummary = ref(null);
@@ -251,59 +253,48 @@ export function useAssetViewerState() {
         gridTemplateColumns: `repeat(${virtualColumnCount.value}, minmax(0, 1fr))`,
     }));
 
-    const tagCategories = computed(() => {
-        return tagCategoriesList.value;
+    const {
+        tagCategories,
+        filteredTags,
+        visibleTags,
+        tagHasMore,
+        tagCountText,
+        selectedTagAliases,
+        selectedTagExamples,
+        fetchTags,
+        isTagFavorite,
+        toggleTagFavorite,
+        loadMoreTags,
+        selectTag,
+        exampleImageUrl,
+        tagSearchUrl,
+        scheduleTagSearch,
+        clearTagSearchTimer,
+    } = useTags({
+        API,
+        buildQuery,
+        saveArrayToStorage,
+        favoritesKey: FAVORITES_KEY,
+        recentKey: RECENT_KEY,
+        normalizeTagQuery,
+        parseAliases,
+        tags,
+        tagFilters,
+        tagCategoriesList,
+        selectedTag,
+        tagStatusText,
+        isLoadingTags,
+        tagExamplesLoading,
+        tagExamples,
+        hasLoadedTags,
+        tagTotal,
+        tagOffset,
+        tagPageSize,
+        favoriteTagNames,
+        recentTagNames,
     });
 
-    const filteredTags = computed(() => {
-        const q = normalizeTagQuery(tagFilters.q);
-
-        return tags.value.filter((tag) => {
-            if (tagFilters.view === "favorites" && !favoriteTagNames.value.has(tag.name)) {
-                return false;
-            }
-            if (tagFilters.view === "recent" && !recentTagNames.value.includes(tag.name)) {
-                return false;
-            }
-            if (!q) {
-                return true;
-            }
-            return normalizeTagQuery(`${tag.name} ${tag.aliases}`).includes(q);
-        });
-    });
-
-    const visibleTags = computed(() => filteredTags.value);
-    const tagHasMore = computed(() => tagFilters.view === "all" && tags.value.length < tagTotal.value);
-    const tagCountText = computed(() => `Showing ${visibleTags.value.length} of ${tagTotal.value} tag(s)`);
-    const duplicateCountText = computed(() => {
-        if (!duplicateSummary.value) {
-            return "No scan yet";
-        }
-        const summary = duplicateSummary.value;
-        return `${summary.groups || 0} group(s) / ${summary.assets || 0} media item(s)`;
-    });
-    const duplicateScanProgressText = computed(() => {
-        const percent = Math.round(Number(duplicateScanProgress.value || 0));
-        return `${percent}%`;
-    });
-    const selectedCompareAssets = computed(() => {
-        const paths = Array.from(selectedPaths.value);
-        if (paths.length !== 2) {
-            return [];
-        }
-        const source = activeTab.value === "duplicates" ? "duplicates" : "assets";
-        const pair = paths.map((path) => findAssetByPath(path, source));
-        if (pair.some((asset) => !asset || !isPreviewableAsset(asset))) {
-            return [];
-        }
-        return pair;
-    });
-    const canCompareSelection = computed(() => selectedCompareAssets.value.length === 2);
-    const compareClipStyle = computed(() => ({
-        clipPath: `inset(0 ${100 - Number(compareSlider.value || 50)}% 0 0)`,
-    }));
     const metadataFilterList = computed(() => METADATA_FILTERS);
-    const selectedTagAliases = computed(() => parseAliases(selectedTag.value?.aliases));
     const folderStatsSummary = computed(() => {
         if (!folderStats.value) {
             return [];
@@ -374,20 +365,6 @@ export function useAssetViewerState() {
                 fields,
             };
         });
-    });
-    const selectedTagExamples = computed(() => {
-        if (!selectedTag.value) {
-            return [];
-        }
-        const examples = tagExamples.value[selectedTag.value.name] || {};
-        return Object.entries(examples)
-            .map(([site, value]) => ({
-                site,
-                score: typeof value?.score === "number" ? value.score : null,
-                image_url: value?.image_url || "",
-                page_url: value?.page_url || value?.post_url || "",
-            }))
-            .filter((item) => item.image_url || item.page_url);
     });
 
     function measureAssetList() {
@@ -729,78 +706,6 @@ export function useAssetViewerState() {
         }
     }
 
-    async function fetchTags({ append = false } = {}) {
-        isLoadingTags.value = true;
-        tagStatusText.value = append ? "Loading more tags..." : "Loading tags...";
-
-        try {
-            const nextOffset = append ? tagOffset.value : 0;
-            const response = await fetch(buildQuery(API.tags, {
-                q: tagFilters.q,
-                category: tagFilters.category,
-                limit: tagPageSize,
-                offset: nextOffset,
-            }));
-            if (!response.ok) {
-                throw new Error(`Failed to load tags (${response.status})`);
-            }
-
-            const payload = await response.json();
-            const incoming = Array.isArray(payload.tags) ? payload.tags : [];
-            const normalizedIncoming = incoming.map((tag) => ({
-                name: String(tag.name || ""),
-                category: String(tag.category || ""),
-                count: Number(tag.count || 0),
-                aliases: String(tag.aliases || ""),
-            }));
-            tags.value = append ? tags.value.concat(normalizedIncoming) : normalizedIncoming;
-            tagOffset.value = tags.value.length;
-            tagTotal.value = Number(payload.total || tags.value.length);
-            tagCategoriesList.value = Array.isArray(payload.categories) ? payload.categories.map(String) : tagCategoriesList.value;
-
-            hasLoadedTags.value = true;
-            tagStatusText.value = `Loaded ${tags.value.length} of ${tagTotal.value} tag(s).`;
-
-            if (selectedTag.value) {
-                const refreshed = tags.value.find((tag) => tag.name === selectedTag.value.name);
-                selectedTag.value = refreshed || null;
-            }
-        } catch (error) {
-            console.error(error);
-            tagStatusText.value = error?.message || "Failed to load tags.";
-        } finally {
-            isLoadingTags.value = false;
-        }
-    }
-
-    function duplicateKindLabel(kind) {
-        if (kind === "exact") {
-            return "Exact files";
-        }
-        if (kind === "pixel") {
-            return "Same pixels";
-        }
-        if (kind === "near") {
-            return "Near duplicates";
-        }
-        return "Duplicates";
-    }
-
-    function duplicateGroupSubtitle(group) {
-        const parts = [`${group.count || 0} media item(s)`];
-        if (Number(group.wasted_bytes || 0) > 0) {
-            parts.push(`${formatBytes(group.wasted_bytes)} reclaimable`);
-        }
-        if (group.kind === "near" && Number.isFinite(Number(group.distance))) {
-            parts.push(`max distance ${group.distance}`);
-        }
-        return parts.join(" / ");
-    }
-
-    function markDuplicateThumbFailed(event) {
-        event?.target?.closest?.(".duplicate-thumb")?.classList.add("thumb-failed");
-    }
-
     function metadataBadges(asset) {
         return Array.isArray(asset?.metadata_badges) ? asset.metadata_badges : [];
     }
@@ -883,299 +788,7 @@ export function useAssetViewerState() {
         isLoadingFolderStats.value = false;
     }
 
-    function refreshDuplicateSummary() {
-        if (!duplicateSummary.value) {
-            return;
-        }
-        const groups = duplicateGroups.value;
-        duplicateSummary.value = {
-            ...duplicateSummary.value,
-            groups: groups.length,
-            assets: groups.reduce((total, group) => total + Number(group.count || 0), 0),
-            exact_groups: groups.filter((group) => group.kind === "exact").length,
-            pixel_groups: groups.filter((group) => group.kind === "pixel").length,
-            near_groups: groups.filter((group) => group.kind === "near").length,
-        };
-    }
 
-    function removePathsFromDuplicateGroups(paths) {
-        const deletedPaths = new Set(paths.filter(Boolean));
-        if (!deletedPaths.size || !duplicateGroups.value.length) {
-            return;
-        }
-        duplicateGroups.value = duplicateGroups.value
-            .map((group) => {
-                const remainingAssets = Array.isArray(group.assets) ? group.assets.filter((asset) => !deletedPaths.has(asset.path)) : [];
-                const sizes = remainingAssets.map((asset) => Number(asset.size_bytes || 0));
-                return {
-                    ...group,
-                    assets: remainingAssets,
-                    count: remainingAssets.length,
-                    total_bytes: sizes.reduce((total, size) => total + size, 0),
-                    wasted_bytes: sizes.length ? sizes.reduce((total, size) => total + size, 0) - Math.max(...sizes) : 0,
-                };
-            })
-            .filter((group) => group.count > 1);
-        refreshDuplicateSummary();
-    }
-
-    function setDuplicateSelection(paths) {
-        const uniquePaths = [...new Set(paths.filter(Boolean))];
-        replaceSelectedPaths(uniquePaths);
-        const anchorPath = uniquePaths[0] || "";
-        selectedPath.value = anchorPath;
-        selectedAsset.value = anchorPath ? findAssetByPath(anchorPath, "duplicates") : null;
-        lastSelectedDuplicateIndex.value = anchorPath ? duplicateAssets.value.findIndex((asset) => asset.path === anchorPath) : -1;
-        duplicateStatusText.value = uniquePaths.length ? `${uniquePaths.length} selected` : "Selection cleared.";
-    }
-
-    function selectDuplicateGroupPaths(group, event = null) {
-        blurActionButton(event);
-        setDuplicateSelection((group?.assets || []).map((asset) => asset.path));
-    }
-
-    function duplicateKeepPath(groupAssets, keepMode) {
-        const sorted = [...groupAssets].sort((left, right) => {
-            if (keepMode === "largest") {
-                return Number(right.size_bytes || 0) - Number(left.size_bytes || 0);
-            }
-            return Number(right.modified_ts || 0) - Number(left.modified_ts || 0);
-        });
-        return sorted[0]?.path;
-    }
-
-    function selectDuplicateGroupExcept(group, keepMode, event = null) {
-        blurActionButton(event);
-        const groupAssets = Array.isArray(group?.assets) ? group.assets : [];
-        if (groupAssets.length < 2) {
-            return;
-        }
-        const keepPath = duplicateKeepPath(groupAssets, keepMode);
-        setDuplicateSelection(groupAssets.map((asset) => asset.path).filter((path) => path && path !== keepPath));
-    }
-
-    function selectAllDuplicateGroupsExcept(keepMode, event = null) {
-        blurActionButton(event);
-        const paths = [];
-        duplicateGroups.value.forEach((group) => {
-            const groupAssets = Array.isArray(group?.assets) ? group.assets : [];
-            if (groupAssets.length < 2) {
-                return;
-            }
-            const keepPath = duplicateKeepPath(groupAssets, keepMode);
-            groupAssets.forEach((asset) => {
-                if (asset.path && asset.path !== keepPath) {
-                    paths.push(asset.path);
-                }
-            });
-        });
-        setDuplicateSelection(paths);
-    }
-
-    function openCompareSelection() {
-        const pair = selectedCompareAssets.value;
-        if (pair.length !== 2) {
-            duplicateStatusText.value = "Need at least two previewable images to compare.";
-            statusText.value = "Need exactly two previewable images selected to compare.";
-            return;
-        }
-        compareLeft.value = pair[0];
-        compareRight.value = pair[1];
-        compareSlider.value = 50;
-    }
-
-    function setCompareSliderFromClientX(clientX) {
-        const stage = compareStageRef.value;
-        if (!stage) {
-            return;
-        }
-        const rect = stage.getBoundingClientRect();
-        const ratio = (Number(clientX) - rect.left) / Math.max(1, rect.width);
-        compareSlider.value = Math.max(0, Math.min(100, Math.round(ratio * 1000) / 10));
-    }
-
-    function startCompareDrag(event) {
-        isCompareDragging.value = true;
-        event.currentTarget?.setPointerCapture?.(event.pointerId);
-        setCompareSliderFromClientX(event.clientX);
-        event.preventDefault();
-    }
-
-    function dragCompareDivider(event) {
-        if (!isCompareDragging.value) {
-            return;
-        }
-        setCompareSliderFromClientX(event.clientX);
-        event.preventDefault();
-    }
-
-    function stopCompareDrag(event) {
-        isCompareDragging.value = false;
-        if (event.currentTarget?.hasPointerCapture?.(event.pointerId)) {
-            event.currentTarget.releasePointerCapture(event.pointerId);
-        }
-    }
-
-    function nudgeCompareDivider(event) {
-        const step = event.shiftKey ? 10 : 2;
-        if (event.key === "ArrowLeft") {
-            compareSlider.value = Math.max(0, compareSlider.value - step);
-            event.preventDefault();
-        } else if (event.key === "ArrowRight") {
-            compareSlider.value = Math.min(100, compareSlider.value + step);
-            event.preventDefault();
-        } else if (event.key === "Home") {
-            compareSlider.value = 0;
-            event.preventDefault();
-        } else if (event.key === "End") {
-            compareSlider.value = 100;
-            event.preventDefault();
-        }
-    }
-
-    function closeCompare() {
-        isCompareDragging.value = false;
-        compareLeft.value = null;
-        compareRight.value = null;
-    }
-
-    function applyDuplicateProgress(progress) {
-        if (!progress || typeof progress !== "object") {
-            return;
-        }
-        duplicateScanProgress.value = Math.max(0, Math.min(Number(progress.percent || 0), 100));
-        duplicateScanPhase.value = String(progress.stage || "");
-        if (progress.message) {
-            duplicateStatusText.value = String(progress.message);
-        }
-    }
-
-    async function readDuplicateStream(response) {
-        if (!response.body?.getReader) {
-            return null;
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let resultPayload = null;
-
-        while (true) {
-            const { value, done } = await reader.read();
-            if (done) {
-                break;
-            }
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop() || "";
-            for (const line of lines) {
-                if (!line.trim()) {
-                    continue;
-                }
-                const event = JSON.parse(line);
-                if (event.type === "progress") {
-                    applyDuplicateProgress(event.progress);
-                } else if (event.type === "result") {
-                    resultPayload = event;
-                } else if (event.type === "error") {
-                    throw new Error(event.error || "Duplicate scan failed.");
-                }
-            }
-        }
-
-        if (buffer.trim()) {
-            const event = JSON.parse(buffer);
-            if (event.type === "result") {
-                resultPayload = event;
-            }
-        }
-        return resultPayload;
-    }
-
-    async function scanDuplicates() {
-        if (!filters.root) {
-            duplicateStatusText.value = "Select a folder before scanning.";
-            duplicateGroups.value = [];
-            duplicateSummary.value = null;
-            duplicateScanProgress.value = 0;
-            duplicateScanPhase.value = "";
-            return;
-        }
-
-        isScanningDuplicates.value = true;
-        duplicateScanProgress.value = 0;
-        duplicateScanPhase.value = "starting";
-        duplicateGroups.value = [];
-        duplicateSummary.value = null;
-        duplicateStatusText.value = duplicateIncludeNear.value ? "Scanning duplicates and near duplicates..." : "Scanning duplicates...";
-        try {
-            const params = {
-                root: filters.root,
-                include_near: duplicateIncludeNear.value,
-                near_threshold: duplicateNearThreshold.value,
-            };
-            const response = await fetch(buildQuery(API.duplicatesStream, params));
-            if (!response.ok) {
-                throw new Error(`Duplicate scan failed (${response.status})`);
-            }
-            const payload = await readDuplicateStream(response) || await fetch(buildQuery(API.duplicates, params)).then((fallbackResponse) => {
-                if (!fallbackResponse.ok) {
-                    throw new Error(`Duplicate scan failed (${fallbackResponse.status})`);
-                }
-                return fallbackResponse.json();
-            });
-            duplicateGroups.value = Array.isArray(payload.groups) ? payload.groups : [];
-            duplicateSummary.value = payload.summary || null;
-            duplicateScanProgress.value = 100;
-            duplicateScanPhase.value = "complete";
-            const groupCount = duplicateSummary.value?.groups || duplicateGroups.value.length;
-            duplicateStatusText.value = groupCount ? `Found ${groupCount} duplicate group(s).` : "No duplicates found.";
-        } catch (error) {
-            console.error(error);
-            duplicateGroups.value = [];
-            duplicateSummary.value = null;
-            duplicateScanProgress.value = 0;
-            duplicateScanPhase.value = "";
-            duplicateStatusText.value = error?.message || "Duplicate scan failed.";
-        } finally {
-            isScanningDuplicates.value = false;
-        }
-    }
-
-    function isTagFavorite(tagName) {
-        return favoriteTagNames.value.has(tagName);
-    }
-
-    function persistFavorites() {
-        saveArrayToStorage(FAVORITES_KEY, Array.from(favoriteTagNames.value));
-    }
-
-    function persistRecent() {
-        saveArrayToStorage(RECENT_KEY, recentTagNames.value);
-    }
-
-    function toggleTagFavorite(tag) {
-        if (!tag?.name) {
-            return;
-        }
-
-        const next = new Set(favoriteTagNames.value);
-        if (next.has(tag.name)) {
-            next.delete(tag.name);
-        } else {
-            next.add(tag.name);
-        }
-
-        favoriteTagNames.value = next;
-        persistFavorites();
-    }
-
-    function loadMoreTags() {
-        if (!tagHasMore.value || isLoadingTags.value) {
-            return;
-        }
-        fetchTags({ append: true });
-    }
 
     function startDetailsResize(event) {
         if (event.button !== 0) {
@@ -1224,48 +837,6 @@ export function useAssetViewerState() {
         document.body.classList.add("preview-resizing");
         document.addEventListener("mousemove", onMove);
         document.addEventListener("mouseup", onUp);
-    }
-
-    async function fetchTagExamples(tagName) {
-        if (!tagName) {
-            return;
-        }
-
-        tagExamplesLoading.value = true;
-        try {
-            const url = buildQuery(API.tagExamples, { tag: tagName });
-            const response = await fetch(url);
-            if (!response.ok) {
-                throw new Error(`Failed to load examples (${response.status})`);
-            }
-            const payload = await response.json();
-            tagExamples.value = {
-                ...tagExamples.value,
-                [tagName]: payload.examples && typeof payload.examples === "object" ? payload.examples : {},
-            };
-        } catch (error) {
-            console.error(error);
-        } finally {
-            tagExamplesLoading.value = false;
-        }
-    }
-
-    async function selectTag(tag) {
-        selectedTag.value = tag;
-        recentTagNames.value = [tag.name, ...recentTagNames.value.filter((name) => name !== tag.name)].slice(0, 50);
-        persistRecent();
-        await fetchTagExamples(tag.name);
-    }
-
-    function exampleImageUrl(url) {
-        return buildQuery(API.tagExampleImage, { url });
-    }
-
-    function tagSearchUrl(tagName, site) {
-        if (site === "danbooru") {
-            return `https://danbooru.donmai.us/posts?tags=${encodeURIComponent(tagName)}`;
-        }
-        return `https://e621.net/posts?tags=${encodeURIComponent(tagName)}`;
     }
 
     async function loadAssetDetails(asset) {
@@ -1515,7 +1086,6 @@ export function useAssetViewerState() {
         selectDuplicateAsset,
         focusDuplicateAsset,
         clearSelection,
-        selectAllAssets,
         selectAllCurrentItems,
         stepSelectedAsset,
     } = useSelection({
@@ -1532,6 +1102,56 @@ export function useAssetViewerState() {
         loadAssetDetails,
         updateSelectionStatus,
         ensureSelectedVisible,
+    });
+
+    const {
+        duplicateCountText,
+        duplicateScanProgressText,
+        canCompareSelection,
+        compareClipStyle,
+        duplicateKindLabel,
+        duplicateGroupSubtitle,
+        markDuplicateThumbFailed,
+        removePathsFromDuplicateGroups,
+        selectDuplicateGroupPaths,
+        selectDuplicateGroupExcept,
+        selectAllDuplicateGroupsExcept,
+        openCompareSelection,
+        startCompareDrag,
+        dragCompareDivider,
+        stopCompareDrag,
+        nudgeCompareDivider,
+        closeCompare,
+        scanDuplicates,
+    } = useDuplicates({
+        API,
+        buildQuery,
+        formatBytes,
+        duplicateGroups,
+        duplicateSummary,
+        duplicateStatusText,
+        duplicateIncludeNear,
+        duplicateNearThreshold,
+        isScanningDuplicates,
+        duplicateScanProgress,
+        duplicateScanPhase,
+        compareLeft,
+        compareRight,
+        compareSlider,
+        compareStageRef,
+        isCompareDragging,
+        selectedPaths,
+        selectedPath,
+        selectedAsset,
+        lastSelectedDuplicateIndex,
+        duplicateAssets,
+        activeTab,
+        filters,
+        replaceSelectedPaths,
+        findAssetByPath,
+        blurActionButton,
+        statusText,
+        isPreviewableAsset,
     });
 
     function openSelectedAssetFull() {
@@ -1604,6 +1224,30 @@ export function useAssetViewerState() {
             // ignore clipboard failures
         }
     }
+
+    const { onDocumentKeydown } = useKeyboardShortcuts({
+        isTypingTarget,
+        compareLeft,
+        compareRight,
+        closeCompare,
+        isDeleteConfirmVisible,
+        hideDeleteConfirm,
+        selectedPaths,
+        clearSelection,
+        activeTab,
+        selectAllCurrentItems,
+        copyText,
+        searchInputRef,
+        virtualColumnCount,
+        stepSelectedAsset,
+        openSelectedAssetFull,
+        selectedPath,
+        replaceSelectedPaths,
+        updateSelectionStatus,
+        duplicateStatusText,
+        deleteCount,
+        requestDeleteSelected,
+    });
 
     async function responseErrorMessage(response, fallback) {
         try {
@@ -1702,119 +1346,6 @@ export function useAssetViewerState() {
         downloadTextFile(`${safeLabel}-metadata-health.json`, JSON.stringify(report, null, 2));
     }
 
-    function onDocumentKeydown(event) {
-        if (event.defaultPrevented || isTypingTarget(event.target)) {
-            return;
-        }
-
-        if (event.key === "Escape") {
-            if (compareLeft.value && compareRight.value) {
-                closeCompare();
-                event.preventDefault();
-                return;
-            }
-            if (isDeleteConfirmVisible.value) {
-                hideDeleteConfirm();
-                event.preventDefault();
-                return;
-            }
-            if (selectedPaths.value.size) {
-                clearSelection();
-                event.preventDefault();
-                return;
-            }
-        }
-
-        const key = String(event.key || "").toLowerCase();
-        const isCommandKey = Boolean(event.ctrlKey || event.metaKey);
-
-        if (key === "shift" || key === "control" || key === "alt" || key === "meta") {
-            return;
-        }
-
-        if (isCommandKey && key === "a" && (activeTab.value === "assets" || activeTab.value === "duplicates")) {
-            event.preventDefault();
-            selectAllCurrentItems();
-            return;
-        }
-
-        if (isCommandKey && key === "c" && selectedPaths.value.size > 0) {
-            event.preventDefault();
-            copyText(Array.from(selectedPaths.value).join("\n"));
-            return;
-        }
-
-        if (isCommandKey && key === "f" && activeTab.value === "assets") {
-            event.preventDefault();
-            searchInputRef.value?.focus();
-            searchInputRef.value?.select();
-            return;
-        }
-
-        if (event.ctrlKey || event.metaKey || event.altKey) {
-            return;
-        }
-
-        if (compareLeft.value && compareRight.value) {
-            return;
-        }
-
-        if (key === "/" && activeTab.value === "assets") {
-            event.preventDefault();
-            searchInputRef.value?.focus();
-            searchInputRef.value?.select();
-            return;
-        }
-
-        if (activeTab.value !== "assets" && activeTab.value !== "duplicates") {
-            return;
-        }
-
-        const rowStep = activeTab.value === "assets" ? Math.max(1, virtualColumnCount.value) : 1;
-        if (event.key === "ArrowDown") {
-            event.preventDefault();
-            stepSelectedAsset(rowStep, { extend: event.shiftKey });
-            return;
-        }
-        if (event.key === "ArrowUp") {
-            event.preventDefault();
-            stepSelectedAsset(-rowStep, { extend: event.shiftKey });
-            return;
-        }
-        if (event.key === "ArrowRight") {
-            event.preventDefault();
-            stepSelectedAsset(1, { extend: event.shiftKey });
-            return;
-        }
-        if (event.key === "ArrowLeft") {
-            event.preventDefault();
-            stepSelectedAsset(-1, { extend: event.shiftKey });
-            return;
-        }
-        if (event.key === "Enter" && activeTab.value === "assets") {
-            event.preventDefault();
-            openSelectedAssetFull();
-            return;
-        }
-        if (event.key === " " && selectedPath.value) {
-            event.preventDefault();
-            if (selectedPaths.value.has(selectedPath.value) && selectedPaths.value.size === 1) {
-                replaceSelectedPaths([]);
-            } else {
-                replaceSelectedPaths([selectedPath.value]);
-            }
-            updateSelectionStatus();
-            if (activeTab.value === "duplicates") {
-                duplicateStatusText.value = selectedPaths.value.size ? `${selectedPaths.value.size} selected` : "Selection cleared.";
-            }
-            return;
-        }
-        if ((event.key === "Delete" || event.key === "Backspace") && deleteCount.value > 0) {
-            event.preventDefault();
-            requestDeleteSelected(event);
-        }
-    }
-
     function addWindowListener(name, handler, options) {
         window.addEventListener(name, handler, options);
         cleanupCallbacks.push(() => window.removeEventListener(name, handler, options));
@@ -1883,15 +1414,7 @@ export function useAssetViewerState() {
     watch(
         () => [tagFilters.q, tagFilters.category, tagFilters.view],
         () => {
-            if (!hasLoadedTags.value || tagFilters.view !== "all") {
-                return;
-            }
-            if (tagSearchTimer) {
-                clearTimeout(tagSearchTimer);
-            }
-            tagSearchTimer = setTimeout(() => {
-                fetchTags({ append: false });
-            }, 180);
+            scheduleTagSearch();
         }
     );
 
@@ -1943,9 +1466,7 @@ export function useAssetViewerState() {
         if (searchTimer) {
             clearTimeout(searchTimer);
         }
-        if (tagSearchTimer) {
-            clearTimeout(tagSearchTimer);
-        }
+        clearTagSearchTimer();
         resizeObserver?.disconnect();
         cleanupCallbacks.forEach((cleanup) => cleanup());
         hideDropOverlay();
