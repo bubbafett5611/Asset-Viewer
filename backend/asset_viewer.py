@@ -518,19 +518,19 @@ def _parse_png_metadata(path: str) -> dict[str, Any]:
 
 
 def _detect_metadata_badges(extension: str, path: str) -> list[dict[str, str]]:
-	from backend.services.asset_viewer_metadata import detect_metadata_badges as _detect
+	from services.asset_viewer_metadata import detect_metadata_badges as _detect
 
 	return _detect(extension, path, image_module=Image)
 
 
 def _metadata_badge_keys_for_file(extension: str, path: str) -> set[str]:
-	from backend.services.asset_viewer_metadata import metadata_badge_keys_for_file as _keys
+	from services.asset_viewer_metadata import metadata_badge_keys_for_file as _keys
 
 	return _keys(extension, path, image_module=Image)
 
 
 def _has_invalid_bubba_metadata(path: str) -> bool:
-	from backend.services.asset_viewer_metadata import has_invalid_bubba_metadata as _has_invalid
+	from services.asset_viewer_metadata import has_invalid_bubba_metadata as _has_invalid
 
 	return _has_invalid(path, image_module=Image)
 
@@ -578,13 +578,13 @@ def repair_png_bubba_metadata(path: str, overwrite: bool = False) -> dict[str, A
 
 
 def build_metadata_report(root: str, limit: int = 10000) -> MetadataReport:
-	from backend.services.asset_viewer_metadata import build_metadata_report as _build_metadata_report
+	from services.asset_viewer_metadata import build_metadata_report as _build_metadata_report
 
 	return _build_metadata_report(root, MetadataReport, scan_assets, image_module=Image, limit=limit)
 
 
 def metadata_health_report(root: str, limit: int = 10000, refresh: bool = False, cache_only: bool = False) -> tuple[MetadataReport | None, bool]:
-	from backend.services.asset_viewer_metadata import metadata_health_report as _metadata_health_report
+	from services.asset_viewer_metadata import metadata_health_report as _metadata_health_report
 
 	return _metadata_health_report(
 		root,
@@ -599,13 +599,13 @@ def metadata_health_report(root: str, limit: int = 10000, refresh: bool = False,
 
 
 def build_folder_stats_report(root: str) -> FolderStatsReport:
-	from backend.services.asset_viewer_metadata import build_folder_stats_report as _build_folder_stats_report
+	from services.asset_viewer_metadata import build_folder_stats_report as _build_folder_stats_report
 
 	return _build_folder_stats_report(root, FolderStatsReport, _is_path_within_root, image_module=Image)
 
 
 def folder_stats_report(root: str, refresh: bool = False, cache_only: bool = False) -> tuple[FolderStatsReport | None, bool]:
-	from backend.services.asset_viewer_metadata import folder_stats_report as _folder_stats_report
+	from services.asset_viewer_metadata import folder_stats_report as _folder_stats_report
 
 	return _folder_stats_report(
 		root,
@@ -618,7 +618,7 @@ def folder_stats_report(root: str, refresh: bool = False, cache_only: bool = Fal
 
 
 def move_file_to_trash(path: str, root: str) -> str:
-	from backend.services.asset_viewer_trash import move_file_to_trash as _move_file_to_trash
+	from services.asset_viewer_trash import move_file_to_trash as _move_file_to_trash
 
 	return _move_file_to_trash(path, root, _is_path_within_root)
 
@@ -638,33 +638,33 @@ def _flatten_to_search_text(value: Any) -> str:
 
 
 def summarize_metadata(extension: str, path: str) -> dict[str, Any]:
-	from backend.services.asset_viewer_metadata import summarize_metadata as _summarize_metadata
+	from services.asset_viewer_metadata import summarize_metadata as _summarize_metadata
 
 	return _summarize_metadata(extension, path, image_module=Image)
 
 
 def discover_asset_roots() -> list[AssetRoot]:
-	from backend.services.asset_viewer_roots import discover_asset_roots as _discover_asset_roots
+	from services.asset_viewer_roots import discover_asset_roots as _discover_asset_roots
 
 	return [AssetRoot(key=key, label=label, path=path) for key, label, path in _discover_asset_roots(logger)]
 
 
 def resolve_requested_root(requested_root: str | None, allowed_roots: list[AssetRoot]) -> str:
-	from backend.services.asset_viewer_roots import resolve_requested_root as _resolve_requested_root
+	from services.asset_viewer_roots import resolve_requested_root as _resolve_requested_root
 
 	serializable_roots = [(root.key, root.label, root.path) for root in allowed_roots]
 	return _resolve_requested_root(requested_root, serializable_roots)
 
 
 def resolve_requested_file(requested_path: str | None, allowed_roots: list[AssetRoot]) -> str:
-	from backend.services.asset_viewer_roots import resolve_requested_file as _resolve_requested_file
+	from services.asset_viewer_roots import resolve_requested_file as _resolve_requested_file
 
 	serializable_roots = [(root.key, root.label, root.path) for root in allowed_roots]
 	return _resolve_requested_file(requested_path, serializable_roots)
 
 
 def find_root_for_path(path: str, allowed_roots: list[AssetRoot]) -> AssetRoot | None:
-	from backend.services.asset_viewer_roots import find_root_for_path as _find_root_for_path
+	from services.asset_viewer_roots import find_root_for_path as _find_root_for_path
 
 	serializable_roots = [(root.key, root.label, root.path) for root in allowed_roots]
 	found = _find_root_for_path(path, serializable_roots)
@@ -674,13 +674,13 @@ def find_root_for_path(path: str, allowed_roots: list[AssetRoot]) -> AssetRoot |
 
 
 def sanitize_upload_filename(filename: str, fallback: str = "upload.png") -> str:
-	from backend.services.asset_viewer_roots import sanitize_upload_filename as _sanitize_upload_filename
+	from services.asset_viewer_roots import sanitize_upload_filename as _sanitize_upload_filename
 
 	return _sanitize_upload_filename(filename, fallback=fallback)
 
 
 def make_unique_destination_path(root: str, filename: str) -> str:
-	from backend.services.asset_viewer_roots import make_unique_destination_path as _make_unique_destination_path
+	from services.asset_viewer_roots import make_unique_destination_path as _make_unique_destination_path
 
 	return _make_unique_destination_path(root, filename)
 
@@ -716,7 +716,7 @@ def build_asset_item(path: str, root: str, include_metadata: bool = False) -> di
 
 
 def generate_thumbnail_bytes(path: str, max_size: int = 256) -> bytes | None:
-	from backend.services.asset_viewer_thumbnails import generate_thumbnail_bytes as _generate_thumbnail_bytes
+	from services.asset_viewer_thumbnails import generate_thumbnail_bytes as _generate_thumbnail_bytes
 
 	return _generate_thumbnail_bytes(path, max_size=max_size, image_module=Image)
 
@@ -808,7 +808,7 @@ def scan_duplicate_assets(
 	limit: int = 5000,
 	progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-	from backend.services.asset_viewer_duplicates import scan_duplicate_assets as _scan_duplicate_assets
+	from services.asset_viewer_duplicates import scan_duplicate_assets as _scan_duplicate_assets
 
 	return _scan_duplicate_assets(
 		root,
@@ -839,7 +839,7 @@ def scan_assets(
 	metadata_mode: str = METADATA_MODE_ALL,
 	metadata_badge_filter: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-	from backend.services.asset_viewer_scanning import scan_assets as _scan_assets
+	from services.asset_viewer_scanning import scan_assets as _scan_assets
 
 	return _scan_assets(
 		root=root,
