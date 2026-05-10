@@ -4,6 +4,8 @@ from io import BytesIO
 import json
 import os
 import sys
+import threading
+import time
 
 import pytest
 from PIL import Image
@@ -158,6 +160,68 @@ def test_settings_api_loads_and_saves_nested_model(client, tmp_path, monkeypatch
     saved = json.loads(settings_file.read_text(encoding="utf-8"))
     assert saved["general"]["asset_roots"] == [str(tmp_path / "assets")]
     assert saved["viewer"]["density"] == "compact"
+
+
+def test_settings_updates_do_not_break_active_asset_requests(asset_root, tmp_path, monkeypatch):
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(
+        json.dumps(
+            {
+                "general": {"asset_roots": [str(asset_root)]},
+                "viewer": {"density": "large", "preview": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(server, "SETTINGS_FILE", settings_file)
+    monkeypatch.setitem(server.Settings.model_config, "json_file", settings_file)
+
+    (asset_root / "concurrent.png").write_bytes(make_png_bytes().getvalue())
+
+    original_scan_assets = server.scan_assets
+
+    def delayed_scan_assets(*args, **kwargs):
+        time.sleep(0.01)
+        return original_scan_assets(*args, **kwargs)
+
+    monkeypatch.setattr(server, "scan_assets", delayed_scan_assets)
+
+    failures: list[str] = []
+
+    def read_worker() -> None:
+        with server.app.test_client() as worker_client:
+            for _ in range(20):
+                response = worker_client.get("/api/assets/list?limit=10")
+                if response.status_code != 200:
+                    failures.append(f"asset list status {response.status_code}")
+
+    def update_worker() -> None:
+        with server.app.test_client() as worker_client:
+            for index in range(20):
+                response = worker_client.put(
+                    "/api/settings",
+                    json={
+                        "general": {"asset_roots": [str(asset_root)]},
+                        "viewer": {
+                            "density": "compact" if index % 2 else "large",
+                            "preview": bool(index % 2),
+                        },
+                    },
+                )
+                if response.status_code != 200:
+                    failures.append(f"settings update status {response.status_code}")
+
+    readers = [threading.Thread(target=read_worker, daemon=True) for _ in range(3)]
+    writer = threading.Thread(target=update_worker, daemon=True)
+
+    for thread in readers:
+        thread.start()
+    writer.start()
+    for thread in readers:
+        thread.join()
+    writer.join()
+
+    assert not failures
 
 
 def test_asset_list_filters_sorts_and_paginates(client, asset_root):

@@ -20,6 +20,10 @@ TAG_LIST_LOCAL = Path(__file__).parent.parent / "frontend" / "danbooru_e621_merg
 FALLBACK_FETCH_LIMIT = 50
 
 DISALLOWED_EXTS = {'.webm', '.mp4', '.gif'}
+TAG_LIST_HEADER = "name,category,count,aliases"
+
+_tag_list_lock = threading.Lock()
+_tag_list_ready = False
 
 
 def _has_disallowed_ext_from_url(url: str) -> bool:
@@ -208,6 +212,10 @@ def _build_example(site: str, p: Optional[Dict[str, Any]], score: int, image_url
 
 
 def ensure_tag_list():
+    global _tag_list_ready
+    with _tag_list_lock:
+        if _tag_list_ready:
+            return
     if not TAG_LIST_LOCAL.exists():
         # Fetch the directory listing from GitHub
         html = _fetch_text(TAG_LIST_DIR_URL)
@@ -227,8 +235,8 @@ def ensure_tag_list():
             raise RuntimeError(f"Failed to fetch tag list file: {raw_url}")
         lines = raw_text.splitlines()
         # Add heading if missing
-        if not lines[0].lower().startswith("name,category,count,aliases"):
-            lines.insert(0, "name,category,count,aliases")
+        if not lines[0].lower().startswith(TAG_LIST_HEADER):
+            lines.insert(0, TAG_LIST_HEADER)
         TAG_LIST_LOCAL.parent.mkdir(parents=True, exist_ok=True)
         with open(TAG_LIST_LOCAL, "w", encoding="utf-8", newline='') as f:
             writer = csv.writer(f)
@@ -238,14 +246,22 @@ def ensure_tag_list():
         # Ensure heading row exists
         with open(TAG_LIST_LOCAL, "r", encoding="utf-8") as f:
             lines = f.read().splitlines()
-        if lines and not lines[0].lower().startswith("name,category,count,aliases"):
-            lines.insert(0, "name,category,count,aliases")
+        if lines and not lines[0].lower().startswith(TAG_LIST_HEADER):
+            lines.insert(0, TAG_LIST_HEADER)
             with open(TAG_LIST_LOCAL, "w", encoding="utf-8", newline='') as f:
                 for line in lines:
                     f.write(line + "\n")
+    _tag_list_ready = True
 
-# Call on startup
-ensure_tag_list()
+
+def _ensure_tag_list_available():
+    try:
+        ensure_tag_list()
+        return None
+    except Exception as exc:
+        logger.exception('Failed to ensure local tag list is available')
+        return jsonify({'error': f'Failed to prepare tag list: {exc}'}), 503
+
 from flask import Flask, jsonify, send_file, request, abort, stream_with_context
 from pathlib import Path
 import os
@@ -380,9 +396,10 @@ def bubba_assets_details():
 
 @app.route('/bubba/assets/upload', methods=['POST'])
 def bubba_assets_upload():
+    asset_roots = _get_asset_roots_snapshot()
     root_key = request.args.get('root')
     try:
-        dest_root = resolve_requested_root(root_key, ASSET_ROOTS)
+        dest_root = resolve_requested_root(root_key, asset_roots)
     except Exception as e:
         abort(400, str(e))
 
@@ -427,12 +444,15 @@ def bubba_assets_upload():
 
 @app.route('/bubba/assets/delete', methods=['POST'])
 def bubba_assets_delete():
+    asset_roots = _get_asset_roots_snapshot()
     payload = request.get_json(silent=True) or {}
-    paths = []
-    if isinstance(payload.get('paths'), list):
-        paths = payload.get('paths')
-    elif isinstance(payload.get('path'), str):
-        paths = [payload.get('path')]
+    paths: list[str] = []
+    payload_paths = payload.get('paths')
+    payload_path = payload.get('path')
+    if isinstance(payload_paths, list):
+        paths = [item for item in payload_paths if isinstance(item, str)]
+    elif isinstance(payload_path, str):
+        paths = [payload_path]
 
     if not paths:
         abort(400, 'No paths provided')
@@ -443,8 +463,8 @@ def bubba_assets_delete():
     errors = []
     for p in paths:
         try:
-            abs_path = resolve_requested_file(p, ASSET_ROOTS)
-            root = find_root_for_path(abs_path, ASSET_ROOTS)
+            abs_path = resolve_requested_file(p, asset_roots)
+            root = find_root_for_path(abs_path, asset_roots)
             if not root:
                 raise PermissionError('File not in allowed roots')
             if os.path.exists(abs_path):
@@ -511,12 +531,17 @@ def asset_viewer_vue_module(filename):
 
 @app.route('/danbooru_e621_merged.csv')
 def serve_tag_csv():
-    if not TAG_LIST_LOCAL.exists():
-        return '', 404
+    failure = _ensure_tag_list_available()
+    if failure is not None:
+        return failure
     return send_file(TAG_LIST_LOCAL, mimetype='text/csv')
 
 @app.route('/api/tags', methods=['GET'])
 def api_tags():
+    failure = _ensure_tag_list_available()
+    if failure is not None:
+        return failure
+
     q = request.args.get('q', '').strip()
     category = request.args.get('category', '').strip()
     try:
@@ -526,7 +551,7 @@ def api_tags():
         abort(400, 'Invalid pagination parameter')
 
     normalized_q = re.sub(r'[\s_-]+', '_', q.lower()).strip('_')
-    tags = []
+    tags: list[dict[str, Any]] = []
     categories = set()
     matched_count = 0
     with open(TAG_LIST_LOCAL, 'r', encoding='utf-8') as f:
@@ -725,6 +750,18 @@ def load_asset_roots():
     return _asset_roots_from_settings(settings)
 
 ASSET_ROOTS = load_asset_roots()
+_asset_roots_lock = threading.Lock()
+
+
+def _get_asset_roots_snapshot() -> list[AssetRoot]:
+    with _asset_roots_lock:
+        return list(ASSET_ROOTS)
+
+
+def _set_asset_roots(new_roots: list[AssetRoot]) -> None:
+    global ASSET_ROOTS
+    with _asset_roots_lock:
+        ASSET_ROOTS = list(new_roots)
 
 
 @app.route('/api/settings', methods=['GET'])
@@ -738,28 +775,30 @@ def api_settings():
 
 @app.route('/api/settings', methods=['PUT'])
 def api_update_settings():
-    global ASSET_ROOTS
     payload = request.get_json(silent=True) or {}
     try:
         settings = validate_settings_payload(payload)
     except Exception as e:
         abort(400, str(e))
     save_settings(SETTINGS_FILE, settings)
-    ASSET_ROOTS = _asset_roots_from_settings(settings)
+    updated_roots = _asset_roots_from_settings(settings)
+    _set_asset_roots(updated_roots)
     return jsonify({
         'settings': settings.model_dump(mode='json'),
         'schema': Settings.model_json_schema(),
-        'roots': [root.__dict__ for root in ASSET_ROOTS],
+        'roots': [root.__dict__ for root in updated_roots],
     })
 
 @app.route('/api/roots', methods=['GET'])
 def api_roots():
+    asset_roots = _get_asset_roots_snapshot()
     return jsonify({
-        'roots': [root.__dict__ for root in ASSET_ROOTS]
+        'roots': [root.__dict__ for root in asset_roots]
     })
 
 @app.route('/api/assets/list', methods=['GET'])
 def api_assets_list():
+    asset_roots = _get_asset_roots_snapshot()
     root_key = request.args.get('root')
     q = request.args.get('q', '')
     ext = request.args.get('ext', '')
@@ -788,7 +827,7 @@ def api_assets_list():
         abort(400, 'Invalid numeric filter')
 
     try:
-        root_path = resolve_requested_root(root_key, ASSET_ROOTS)
+        root_path = resolve_requested_root(root_key, asset_roots)
     except Exception as e:
         abort(400, str(e))
 
@@ -812,6 +851,7 @@ def api_assets_list():
 
 @app.route('/api/assets/metadata/health', methods=['GET'])
 def api_assets_metadata_health():
+    asset_roots = _get_asset_roots_snapshot()
     root_key = request.args.get('root')
     refresh = request.args.get('refresh', 'false').lower() == 'true'
     cache_only = request.args.get('cache_only', 'false').lower() == 'true'
@@ -820,7 +860,7 @@ def api_assets_metadata_health():
     except ValueError:
         abort(400, 'Invalid metadata health parameter')
     try:
-        root_path = resolve_requested_root(root_key, ASSET_ROOTS)
+        root_path = resolve_requested_root(root_key, asset_roots)
     except Exception as e:
         abort(400, str(e))
     report, cached = metadata_health_report(root_path, limit=limit, refresh=refresh, cache_only=cache_only)
@@ -829,11 +869,12 @@ def api_assets_metadata_health():
 
 @app.route('/api/assets/stats', methods=['GET'])
 def api_assets_stats():
+    asset_roots = _get_asset_roots_snapshot()
     root_key = request.args.get('root')
     refresh = request.args.get('refresh', 'false').lower() == 'true'
     cache_only = request.args.get('cache_only', 'false').lower() == 'true'
     try:
-        root_path = resolve_requested_root(root_key, ASSET_ROOTS)
+        root_path = resolve_requested_root(root_key, asset_roots)
     except Exception as e:
         abort(400, str(e))
     report, cached = folder_stats_report(root_path, refresh=refresh, cache_only=cache_only)
@@ -842,6 +883,7 @@ def api_assets_stats():
 
 @app.route('/api/assets/duplicates', methods=['GET'])
 def api_assets_duplicates():
+    asset_roots = _get_asset_roots_snapshot()
     root_key = request.args.get('root')
     include_near = request.args.get('include_near', 'false').lower() == 'true'
     try:
@@ -851,7 +893,7 @@ def api_assets_duplicates():
         abort(400, 'Invalid duplicate scan parameter')
 
     try:
-        root_path = resolve_requested_root(root_key, ASSET_ROOTS)
+        root_path = resolve_requested_root(root_key, asset_roots)
     except Exception as e:
         abort(400, str(e))
 
@@ -866,6 +908,7 @@ def api_assets_duplicates():
 
 @app.route('/api/assets/duplicates/stream', methods=['GET'])
 def api_assets_duplicates_stream():
+    asset_roots = _get_asset_roots_snapshot()
     root_key = request.args.get('root')
     include_near = request.args.get('include_near', 'false').lower() == 'true'
     try:
@@ -875,7 +918,7 @@ def api_assets_duplicates_stream():
         abort(400, 'Invalid duplicate scan parameter')
 
     try:
-        root_path = resolve_requested_root(root_key, ASSET_ROOTS)
+        root_path = resolve_requested_root(root_key, asset_roots)
     except Exception as e:
         abort(400, str(e))
 
@@ -910,13 +953,14 @@ def api_assets_duplicates_stream():
             if event.get('type') == 'done':
                 break
 
-    return Response(generate(), mimetype='application/x-ndjson')
+    return Response(generate(), mimetype='application/x-ndjson')  # type: ignore[call-arg]
 
 @app.route('/api/assets/file', methods=['GET'])
 def api_assets_file():
+    asset_roots = _get_asset_roots_snapshot()
     path = request.args.get('path')
     try:
-        abs_path = resolve_requested_file(path, ASSET_ROOTS)
+        abs_path = resolve_requested_file(path, asset_roots)
     except Exception as e:
         abort(400, str(e))
     mime, _ = mimetypes.guess_type(abs_path)
@@ -924,10 +968,11 @@ def api_assets_file():
 
 @app.route('/api/assets/thumb', methods=['GET'])
 def api_assets_thumb():
+    asset_roots = _get_asset_roots_snapshot()
     path = request.args.get('path')
     size = int(request.args.get('size', 256))
     try:
-        abs_path = resolve_requested_file(path, ASSET_ROOTS)
+        abs_path = resolve_requested_file(path, asset_roots)
     except Exception as e:
         abort(400, str(e))
     thumb = generate_thumbnail_bytes(abs_path, max_size=size)
@@ -943,10 +988,11 @@ def api_assets_thumb():
 
 @app.route('/api/assets/details', methods=['GET'])
 def api_assets_details():
+    asset_roots = _get_asset_roots_snapshot()
     path = request.args.get('path')
     try:
-        abs_path = resolve_requested_file(path, ASSET_ROOTS)
-        root = find_root_for_path(abs_path, ASSET_ROOTS)
+        abs_path = resolve_requested_file(path, asset_roots)
+        root = find_root_for_path(abs_path, asset_roots)
         if not root:
             abort(400, 'File not in allowed roots')
         item = build_asset_item(abs_path, root.path, include_metadata=True)
@@ -957,12 +1003,13 @@ def api_assets_details():
 
 @app.route('/api/assets/metadata/repair', methods=['POST'])
 def api_assets_repair_metadata():
+    asset_roots = _get_asset_roots_snapshot()
     payload = request.get_json(silent=True) or {}
     path = payload.get('path')
     overwrite = payload.get('overwrite', False) is True
     try:
-        abs_path = resolve_requested_file(path, ASSET_ROOTS)
-        root = find_root_for_path(abs_path, ASSET_ROOTS)
+        abs_path = resolve_requested_file(path, asset_roots)
+        root = find_root_for_path(abs_path, asset_roots)
         if not root:
             raise PermissionError('File not in allowed roots')
         result = repair_png_bubba_metadata(abs_path, overwrite=overwrite)
@@ -974,17 +1021,18 @@ def api_assets_repair_metadata():
 
 @app.route('/api/assets/open-folder', methods=['POST'])
 def api_assets_open_folder():
+    asset_roots = _get_asset_roots_snapshot()
     payload = request.get_json(silent=True) or {}
     path = payload.get('path')
     try:
-        abs_path = resolve_requested_file(path, ASSET_ROOTS)
+        abs_path = resolve_requested_file(path, asset_roots)
     except Exception as e:
         abort(400, str(e))
 
     folder = os.path.dirname(abs_path)
     try:
         if os.name == 'nt':
-            os.startfile(folder)  # type: ignore[attr-defined]
+            os.startfile(folder)
         elif sys.platform == 'darwin':
             subprocess.Popen(['open', folder])
         else:

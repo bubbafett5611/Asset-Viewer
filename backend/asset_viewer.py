@@ -5,6 +5,7 @@ from pathlib import Path
 from io import BytesIO
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -28,6 +29,39 @@ MODEL_EXTENSIONS = {".safetensors", ".ckpt", ".pt", ".pth", ".onnx"}
 REPORT_CACHE_DIRNAME = ".asset_viewer_reports"
 FOLDER_STATS_REPORT_FILE = "folder_stats.json"
 METADATA_REPORT_FILE = "metadata_report.json"
+METADATA_MODE_ALL = "all"
+METADATA_MODE_HAS_GENERATION = "has_generation"
+METADATA_MODE_MISSING_GENERATION = "missing_generation"
+METADATA_MODE_HAS_BUBBA_METADATA = "has_bubba_metadata"
+METADATA_MODE_MISSING_BUBBA_METADATA = "missing_bubba_metadata"
+METADATA_MODE_HAS_WORKFLOW = "has_workflow"
+METADATA_MODE_MISSING_WORKFLOW = "missing_workflow"
+VALID_METADATA_MODES = {
+	METADATA_MODE_ALL,
+	METADATA_MODE_HAS_GENERATION,
+	METADATA_MODE_MISSING_GENERATION,
+	METADATA_MODE_HAS_BUBBA_METADATA,
+	METADATA_MODE_MISSING_BUBBA_METADATA,
+	METADATA_MODE_HAS_WORKFLOW,
+	METADATA_MODE_MISSING_WORKFLOW,
+}
+BADGE_KEY_BUBBA_METADATA = "bubba_metadata"
+BADGE_KEY_WORKFLOW = "workflow"
+BADGE_KEY_PARAMETERS = "parameters"
+BADGE_KEY_NO_TRACKED_METADATA = "no_tracked_metadata"
+VALID_METADATA_BADGE_KEYS = {
+	BADGE_KEY_BUBBA_METADATA,
+	BADGE_KEY_WORKFLOW,
+	BADGE_KEY_PARAMETERS,
+	BADGE_KEY_NO_TRACKED_METADATA,
+}
+METADATA_BADGE_LABELS = {
+	BADGE_KEY_BUBBA_METADATA: "Bubba",
+	BADGE_KEY_WORKFLOW: "Workflow",
+	BADGE_KEY_PARAMETERS: "Params",
+}
+
+logger = logging.getLogger("bubba.asset_viewer")
 
 BUBBA_METADATA_DEFAULTS: dict[str, Any] = {
 	"model_name": "",
@@ -500,12 +534,9 @@ def _detect_metadata_badges(extension: str, path: str) -> list[dict[str, str]]:
 
 	keys = {str(key).lower() for key in info.keys()}
 	badges: list[dict[str, str]] = []
-	if "bubba_metadata" in keys:
-		badges.append({"key": "bubba_metadata", "label": "Bubba"})
-	if "workflow" in keys:
-		badges.append({"key": "workflow", "label": "Workflow"})
-	if "parameters" in keys:
-		badges.append({"key": "parameters", "label": "Params"})
+	for key in (BADGE_KEY_BUBBA_METADATA, BADGE_KEY_WORKFLOW, BADGE_KEY_PARAMETERS):
+		if key in keys:
+			badges.append({"key": key, "label": METADATA_BADGE_LABELS[key]})
 	return badges
 
 
@@ -578,11 +609,11 @@ def build_metadata_report(root: str, limit: int = 10000) -> MetadataReport:
 		if extension == ".png":
 			stats.png_assets += 1
 		keys = {badge.get("key") for badge in asset.get("metadata_badges", []) if isinstance(badge, dict)}
-		if "bubba_metadata" in keys:
+		if BADGE_KEY_BUBBA_METADATA in keys:
 			stats.bubba_metadata += 1
-		if "workflow" in keys:
+		if BADGE_KEY_WORKFLOW in keys:
 			stats.workflow += 1
-		if "parameters" in keys:
+		if BADGE_KEY_PARAMETERS in keys:
 			stats.parameters += 1
 		if extension == ".png" and not keys:
 			stats.no_tracked_metadata += 1
@@ -631,11 +662,11 @@ def build_folder_stats_report(root: str) -> FolderStatsReport:
 
 			if extension == ".png":
 				keys = _metadata_badge_keys_for_file(extension, abs_path)
-				if "bubba_metadata" in keys:
+				if BADGE_KEY_BUBBA_METADATA in keys:
 					stats.bubba_metadata += 1
-				if "workflow" in keys:
+				if BADGE_KEY_WORKFLOW in keys:
 					stats.workflow += 1
-				if "parameters" in keys:
+				if BADGE_KEY_PARAMETERS in keys:
 					stats.parameters += 1
 				if not keys:
 					stats.no_tracked_metadata += 1
@@ -720,7 +751,7 @@ def discover_asset_roots() -> list[AssetRoot]:
 	try:
 		import folder_paths  # type: ignore
 	except Exception as e:
-		print(f"[asset_viewer] Could not import folder_paths: {e}")
+		logger.info("Could not import folder_paths: %s", e)
 		folder_paths = None
 
 	if folder_paths is not None:
@@ -731,25 +762,25 @@ def discover_asset_roots() -> list[AssetRoot]:
 			try:
 				getter = getattr(folder_paths, getter_name)
 				folder = getter()
-				print(f"[asset_viewer] {getter_name} returned: {folder}")
+				logger.debug("%s returned: %s", getter_name, folder)
 			except Exception as e:
-				print(f"[asset_viewer] Error calling {getter_name}: {e}")
+				logger.warning("Error calling %s: %s", getter_name, e)
 				folder = None
 			if not folder:
 				continue
 			real = _safe_real_path(folder)
 			if real in seen or not os.path.isdir(folder):
-				print(f"[asset_viewer] Skipping folder (already seen or not a dir): {folder}")
+				logger.debug("Skipping folder (already seen or not a dir): %s", folder)
 				continue
 			seen.add(real)
 			roots.append(AssetRoot(key=key, label=label, path=os.path.abspath(folder)))
 
 	if not roots:
 		fallback = os.getcwd()
-		print(f"[asset_viewer] No asset roots found, using fallback: {fallback}")
+		logger.info("No asset roots found, using fallback: %s", fallback)
 		roots.append(AssetRoot(key="cwd", label="Current Directory", path=os.path.abspath(fallback)))
 
-	print(f"[asset_viewer] Discovered asset roots: {roots}")
+	logger.info("Discovered %d asset roots.", len(roots))
 	return roots
 
 
@@ -1125,7 +1156,7 @@ def scan_assets(
 	min_size_bytes: int | None = None,
 	max_size_bytes: int | None = None,
 	modified_after_ts: float | None = None,
-	metadata_mode: str = "all",
+	metadata_mode: str = METADATA_MODE_ALL,
 	metadata_badge_filter: list[str] | None = None,
 ) -> list[dict[str, Any]]:
 	normalized_root = os.path.abspath(root)
@@ -1147,21 +1178,11 @@ def scan_assets(
 	if requested_sort_dir not in {"asc", "desc"}:
 		requested_sort_dir = "asc"
 
-	requested_metadata_mode = str(metadata_mode or "all").strip().lower()
-	_valid_metadata_modes = {
-		"all",
-		"has_generation",
-		"missing_generation",
-		"has_bubba_metadata",
-		"missing_bubba_metadata",
-		"has_workflow",
-		"missing_workflow",
-	}
-	if requested_metadata_mode not in _valid_metadata_modes:
-		requested_metadata_mode = "all"
+	requested_metadata_mode = str(metadata_mode or METADATA_MODE_ALL).strip().lower()
+	if requested_metadata_mode not in VALID_METADATA_MODES:
+		requested_metadata_mode = METADATA_MODE_ALL
 	requested_badges = {str(item).strip().lower() for item in (metadata_badge_filter or []) if str(item).strip()}
-	valid_badges = {"bubba_metadata", "workflow", "parameters", "no_tracked_metadata"}
-	requested_badges = requested_badges.intersection(valid_badges)
+	requested_badges = requested_badges.intersection(VALID_METADATA_BADGE_KEYS)
 
 	min_size = int(min_size_bytes) if isinstance(min_size_bytes, int) else None
 	if min_size is not None and min_size < 0:
@@ -1225,7 +1246,7 @@ def scan_assets(
 			if modified_after is not None and modified_ts < modified_after:
 				continue
 
-			if requested_metadata_mode != "all":
+			if requested_metadata_mode != METADATA_MODE_ALL:
 				if supports_metadata:
 					if not metadata_summary:
 						metadata_summary = summarize_metadata(extension, abs_path)
@@ -1247,23 +1268,23 @@ def scan_assets(
 					has_bubba_metadata = False
 					has_workflow = False
 
-				if requested_metadata_mode == "has_generation" and not has_generation:
+				if requested_metadata_mode == METADATA_MODE_HAS_GENERATION and not has_generation:
 					continue
-				if requested_metadata_mode == "missing_generation" and has_generation:
+				if requested_metadata_mode == METADATA_MODE_MISSING_GENERATION and has_generation:
 					continue
-				if requested_metadata_mode == "has_bubba_metadata" and not has_bubba_metadata:
+				if requested_metadata_mode == METADATA_MODE_HAS_BUBBA_METADATA and not has_bubba_metadata:
 					continue
-				if requested_metadata_mode == "missing_bubba_metadata" and has_bubba_metadata:
+				if requested_metadata_mode == METADATA_MODE_MISSING_BUBBA_METADATA and has_bubba_metadata:
 					continue
-				if requested_metadata_mode == "has_workflow" and not has_workflow:
+				if requested_metadata_mode == METADATA_MODE_HAS_WORKFLOW and not has_workflow:
 					continue
-				if requested_metadata_mode == "missing_workflow" and has_workflow:
+				if requested_metadata_mode == METADATA_MODE_MISSING_WORKFLOW and has_workflow:
 					continue
 
 			metadata_badges = _detect_metadata_badges(extension, abs_path)
 			if requested_badges:
 				badge_keys = {badge["key"] for badge in metadata_badges}
-				if "no_tracked_metadata" in requested_badges:
+				if BADGE_KEY_NO_TRACKED_METADATA in requested_badges:
 					if badge_keys:
 						continue
 				elif not requested_badges.issubset(badge_keys):

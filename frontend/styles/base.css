@@ -202,13 +202,18 @@ body::before {
 }
 
 .btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
 	padding: 8px 16px;
-	border: none;
+	border: 1px solid transparent;
 	border-radius: 8px;
-	font-size: 0.95rem;
+	font: inherit;
+	font-size: 0.9rem;
 	font-weight: 500;
 	cursor: pointer;
-	transition: background-color var(--transition-base);
+	transition: border-color var(--transition-base), background-color var(--transition-base), color var(--transition-base);
 }
 
 .btn-secondary {
