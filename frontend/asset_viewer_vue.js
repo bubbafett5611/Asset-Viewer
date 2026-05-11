@@ -169,6 +169,19 @@ createApp({
                 </div>
             </header>
 
+            <div v-if="updateNotice" class="update-banner" role="status" aria-live="polite">
+                <div class="update-banner-copy">
+                    <strong>Update available:</strong>
+                    <span>{{ updateNotice.latestVersion }}</span>
+                    <span class="update-banner-current">(current: {{ updateNotice.currentVersion }})</span>
+                </div>
+                <div class="update-banner-actions">
+                    <button class="button button--compact" type="button" @click="openUpdateRelease">View Release</button>
+                    <button class="button button--compact button--ghost" type="button" @click="snoozeUpdateNotice">Remind me later</button>
+                    <button class="button button--compact button--ghost" type="button" @click="skipUpdateVersion">Skip this version</button>
+                </div>
+            </div>
+
             <AssetsView
                 v-if="activeTab === 'assets'"
                 v-bind="assetsViewProps"

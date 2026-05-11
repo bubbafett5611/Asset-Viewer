@@ -1,6 +1,6 @@
 [project]
 name = "asset-viewer-standalone"
-version = "0.1.0"
+version = "0.1.1"
 description = "Standalone media asset viewer."
 authors = ["Bubbafett5611"]
 license = "MIT"
