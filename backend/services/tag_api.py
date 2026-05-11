@@ -87,10 +87,11 @@ def _fetch_text(url: str, headers: dict[str, Any] | None = None, timeout: int = 
 def _read_csv_rows(path: Path) -> list[dict[str, str]]:
     with open(path, 'r', encoding='utf-8', newline='') as handle:
         reader = csv.reader(handle)
-        first_row = next(reader, None)
-        if first_row is None:
+        first_row_raw = next(reader, None)
+        if first_row_raw is None:
             return []
 
+        first_row: list[str] = first_row_raw
         normalized = [value.strip().lower() for value in first_row]
         has_header = len(normalized) >= 3 and normalized[:3] == ['name', 'category', 'count']
 
@@ -107,7 +108,7 @@ def _read_csv_rows(path: Path) -> list[dict[str, str]]:
                 )
             return rows
 
-        for row in chain([first_row], reader):
+        for row in chain([first_row], reader):  # type: ignore[assignment]
             if not row:
                 continue
             if len(row) < 3:
