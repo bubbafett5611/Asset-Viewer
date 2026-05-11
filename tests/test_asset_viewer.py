@@ -3,6 +3,7 @@ from __future__ import annotations
 from io import BytesIO
 import json
 import os
+from pathlib import Path
 import sys
 import threading
 import time
@@ -16,8 +17,10 @@ sys.path.insert(0, "backend")
 import server  # noqa: E402
 from services import app_context  # noqa: E402
 from services import asset_api  # noqa: E402
+from services import asset_viewer_metadata  # noqa: E402
 from services import tag_api  # noqa: E402
 from asset_viewer import AssetRoot  # noqa: E402
+import runtime_paths  # noqa: E402
 from settings_model import Settings  # noqa: E402
 
 
@@ -226,6 +229,58 @@ def test_settings_updates_do_not_break_active_asset_requests(asset_root, tmp_pat
     writer.join()
 
     assert not failures
+
+
+def test_packaged_settings_path_uses_appdata(tmp_path, monkeypatch):
+    appdata_dir = tmp_path / "AppData" / "Roaming"
+    monkeypatch.setenv("APPDATA", str(appdata_dir))
+    monkeypatch.delenv(runtime_paths.DATA_DIR_ENV, raising=False)
+    monkeypatch.delenv(runtime_paths.SETTINGS_FILE_ENV, raising=False)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+
+    assert runtime_paths.settings_file() == appdata_dir / runtime_paths.APP_NAME / "settings.json"
+
+
+def test_packaged_first_launch_copies_bundled_settings(tmp_path, monkeypatch):
+    appdata_dir = tmp_path / "AppData" / "Roaming"
+    bundle_dir = tmp_path / "bundle"
+    bundle_dir.mkdir()
+    bundled_settings = bundle_dir / "settings.json"
+    bundled_settings.write_text(
+        '{"general": {"asset_roots": ["C:/Assets"]}, "viewer": {"density": "large", "preview": false}}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("APPDATA", str(appdata_dir))
+    monkeypatch.delenv(runtime_paths.DATA_DIR_ENV, raising=False)
+    monkeypatch.delenv(runtime_paths.SETTINGS_FILE_ENV, raising=False)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(bundle_dir), raising=False)
+
+    settings_path = runtime_paths.ensure_settings_file()
+
+    assert settings_path == appdata_dir / runtime_paths.APP_NAME / "settings.json"
+    assert settings_path.read_text(encoding="utf-8") == bundled_settings.read_text(encoding="utf-8")
+
+
+def test_packaged_report_cache_uses_appdata(tmp_path, monkeypatch):
+    appdata_dir = tmp_path / "AppData" / "Roaming"
+    asset_root_path = tmp_path / "assets"
+    asset_root_path.mkdir()
+    monkeypatch.setenv("APPDATA", str(appdata_dir))
+    monkeypatch.delenv(runtime_paths.DATA_DIR_ENV, raising=False)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+
+    cache_path = Path(
+        asset_viewer_metadata._report_cache_path(
+            str(asset_root_path),
+            "folder_stats.json",
+            lambda path, root: os.path.commonpath([path, root]) == root,
+        )
+    )
+
+    assert cache_path.parent.parent == appdata_dir / runtime_paths.APP_NAME / "cache" / "reports"
+    assert asset_root_path not in cache_path.parents
 
 
 def test_asset_list_filters_sorts_and_paginates(client, asset_root):

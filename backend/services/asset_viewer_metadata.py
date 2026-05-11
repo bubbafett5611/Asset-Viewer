@@ -9,6 +9,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from runtime_paths import report_cache_file, uses_user_data_for_cache
+
 ALLOWED_UPLOAD_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
 MODEL_EXTENSIONS = {".safetensors", ".ckpt", ".pt", ".pth", ".onnx"}
 REPORT_CACHE_DIRNAME = ".asset_viewer_reports"
@@ -318,6 +320,9 @@ def summarize_metadata(extension: str, path: str, image_module=None) -> dict[str
 
 
 def _report_cache_path(root: str, filename: str, is_path_within_root_fn) -> str:
+    if uses_user_data_for_cache():
+        return str(report_cache_file(root, filename))
+
     normalized_root = os.path.abspath(root)
     cache_dir = os.path.join(normalized_root, REPORT_CACHE_DIRNAME)
     cache_path = os.path.abspath(os.path.join(cache_dir, filename))

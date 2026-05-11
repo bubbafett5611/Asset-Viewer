@@ -1,0 +1,9 @@
+{
+  "general": {
+    "asset_roots": []
+  },
+  "viewer": {
+    "density": "comfortable",
+    "preview": false
+  }
+}
