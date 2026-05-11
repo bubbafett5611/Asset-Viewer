@@ -6,9 +6,9 @@ from pathlib import Path
 
 from asset_viewer import AssetRoot
 
-from settings_model import Settings
+from settings_model import DEFAULT_SETTINGS_FILE, Settings
 
-SETTINGS_FILE = Path(__file__).resolve().parents[2] / 'settings.json'
+SETTINGS_FILE = DEFAULT_SETTINGS_FILE
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s in %(module)s: %(message)s')
 logger = logging.getLogger('bubba.server')

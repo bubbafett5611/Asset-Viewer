@@ -165,6 +165,24 @@ Only files inside configured asset roots are available to the app. If no roots a
 
 You can configure multiple roots. The viewer will show them in the root picker so you can switch between libraries without changing code or restarting your workflow.
 
+### Where Settings Are Stored
+
+When running from a source checkout, the app reads and writes the repo-local `settings.json` file.
+
+Standalone packaged builds are designed to keep user-editable state out of the install folder. In packaged mode, settings are stored at:
+
+```text
+%APPDATA%\Bubba Media Viewer\settings.json
+```
+
+Generated report caches are also stored under:
+
+```text
+%APPDATA%\Bubba Media Viewer\cache\
+```
+
+On first launch, the packaged app copies the bundled default `settings.json` into AppData if no user settings file exists yet. This means the app can be updated or replaced later without wiping your configured media folders or relying on writes to the install directory.
+
 ### Viewer Preferences
 
 The `viewer` section controls presentation defaults:
@@ -450,10 +468,89 @@ Format frontend files:
 npm run format:frontend
 ```
 
+### Windows Build
+
+Install build tooling and create a portable Windows build:
+
+```powershell
+.\scripts\build_windows.ps1
+```
+
+For a faster local packaging pass after checks already passed:
+
+```powershell
+.\scripts\build_windows.ps1 -SkipChecks
+```
+
+The build outputs:
+
+```text
+dist\BubbaMediaViewer\
+dist\BubbaMediaViewer-windows-x64.zip
+```
+
+GitHub Actions runs CI checks on `develop` and `main`, and publishes release artifacts from version tags matching `v*`.
+
+To publish a GitHub Release:
+
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Version tags matching `v*` run the Windows build, create a GitHub Release, generate release notes, and attach `BubbaMediaViewer-windows-x64.zip` to the release.
+
+### CI And Release Flow Quick Guide
+
+This repo uses two workflows:
+
+- `.github/workflows/windows-build.yml` (CI): runs backend/frontend checks on pushes to `develop` and `main`.
+- `.github/workflows/windows-release.yml` (Release): runs on pushed tags matching `v*`, builds the portable zip, and publishes a GitHub Release.
+
+Typical flow:
+
+1. Open a feature branch from `develop`.
+2. Merge feature branch into `develop` to run CI checks.
+3. Merge `develop` into `main` when ready to ship.
+4. Create and push a version tag on `main` to publish the release.
+
+Example commands:
+
+```powershell
+# Start feature work from develop
+git checkout develop
+git pull origin develop
+git checkout -b feature/my-change
+
+# After committing, push feature branch and open PR to develop
+git push -u origin feature/my-change
+
+# After PR merge to develop, update local branches
+git checkout develop
+git pull origin develop
+git checkout main
+git pull origin main
+
+# Merge develop into main (or use PR in GitHub)
+git merge --ff-only develop
+git push origin main
+
+# Tag main for release
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Notes:
+
+- Keep tags semantic, for example `v0.1.0`, `v0.1.1`, `v0.2.0`.
+- Create tags from the exact `main` commit you want to release.
+- Create the tag after that PR is merged into `main`.
+
 ### Maintenance Notes
 
 - Keep Flask routes thin; route modules should validate HTTP input and delegate behavior to `backend/services/`.
 - Keep Vue components focused on rendering and user events; shared state/workflows belong in composables.
+- Keep runtime path decisions in `backend/runtime_paths.py`; packaged builds should write mutable state to AppData, not the install directory.
 - Update both the in-app shortcut modal and this README when adding or changing shortcuts.
 - Update `backend/settings_model.py` when adding persisted settings.
 - Avoid committing local caches, generated thumbnails, `.asset_viewer_trash`, virtualenvs, or `node_modules`.

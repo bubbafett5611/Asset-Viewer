@@ -12,11 +12,12 @@ import requests
 from bs4 import BeautifulSoup
 from flask import Response, abort, jsonify, request, send_file
 
+from runtime_paths import frontend_root
 from services import app_context
 
 TAG_LIST_DIR_URL = 'https://github.com/DraconicDragon/dbr-e621-lists-archive/tree/main/tag-lists/danbooru_e621_merged'
 RAW_BASE = 'https://raw.githubusercontent.com/DraconicDragon/dbr-e621-lists-archive/main/tag-lists/danbooru_e621_merged/'
-TAG_LIST_LOCAL = Path(__file__).resolve().parents[2] / 'frontend' / 'danbooru_e621_merged.csv'
+TAG_LIST_LOCAL = frontend_root() / 'danbooru_e621_merged.csv'
 FALLBACK_FETCH_LIMIT = 50
 DISALLOWED_EXTS = {'.webm', '.mp4', '.gif'}
 TAG_LIST_HEADER = 'name,category,count,aliases'
