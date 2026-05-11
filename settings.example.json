@@ -5,5 +5,8 @@
   "viewer": {
     "density": "comfortable",
     "preview": false
+  },
+  "updates": {
+    "auto_check_enabled": true
   }
 }

@@ -21,12 +21,14 @@ def create_app() -> Flask:
     from blueprints.settings import settings_bp
     from blueprints.tags import tags_bp
     from blueprints.ui import ui_bp
+    from blueprints.updates import updates_bp
 
     app.register_blueprint(ui_bp)
     app.register_blueprint(tags_bp)
     app.register_blueprint(settings_bp)
     app.register_blueprint(assets_bp)
     app.register_blueprint(duplicates_bp)
+    app.register_blueprint(updates_bp)
     return app
 
 

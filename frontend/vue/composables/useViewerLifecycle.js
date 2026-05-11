@@ -20,6 +20,8 @@ export function useViewerLifecycle(options) {
     scheduleTagSearch,
     clearTagSearchTimer,
     fetchSettings,
+    fetchAppInfo,
+    isAutoUpdateCheckEnabled,
     fetchRoots,
     statusText,
     onWindowDragEnter,
@@ -28,7 +30,8 @@ export function useViewerLifecycle(options) {
     onWindowDrop,
     hideDropOverlay,
     measureAssetList,
-    onDocumentKeydown
+    onDocumentKeydown,
+    checkForUpdates
   } = options;
 
   let searchTimer = null;
@@ -123,11 +126,15 @@ export function useViewerLifecycle(options) {
 
     try {
       await fetchSettings();
+      await fetchAppInfo?.();
       await fetchRoots();
       await fetchAssets({ append: false });
       if (activeTab.value === 'stats') {
         await fetchFolderStats();
         await fetchMetadataHealth({ refresh: false, cacheOnly: true });
+      }
+      if (isAutoUpdateCheckEnabled?.()) {
+        await checkForUpdates?.();
       }
     } catch (error) {
       console.error(error);
