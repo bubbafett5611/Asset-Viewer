@@ -13,6 +13,30 @@ export const SettingsView = {
       type: String,
       required: true
     },
+    appVersion: {
+      type: String,
+      default: '0.0.0'
+    },
+    appRepo: {
+      type: String,
+      default: ''
+    },
+    appReleasePageUrl: {
+      type: String,
+      default: ''
+    },
+    isCheckingUpdates: {
+      type: Boolean,
+      default: false
+    },
+    updateCheckStatus: {
+      type: String,
+      default: ''
+    },
+    checkForUpdatesNow: {
+      type: Function,
+      required: true
+    },
     isSavingSettings: {
       type: Boolean,
       default: false
@@ -148,6 +172,33 @@ export const SettingsView = {
                                 @change="updateSetting(section.key, field.key, $event.target.value)"
                             />
                         </div>
+                    </section>
+                    <section class="settings-list settings-about">
+                      <h3>About</h3>
+                      <div class="settings-row settings-row--about">
+                        <div class="settings-about-grid">
+                          <div>
+                            <span class="settings-about-label">Current version</span>
+                            <div class="settings-about-value">v{{ appVersion }}</div>
+                          </div>
+                          <div v-if="appRepo">
+                            <span class="settings-about-label">Repository</span>
+                            <div class="settings-about-value">{{ appRepo }}</div>
+                          </div>
+                          <div v-if="appReleasePageUrl">
+                            <a class="button button--compact" :href="appReleasePageUrl" target="_blank" rel="noopener noreferrer">View releases</a>
+                          </div>
+                          <div>
+                            <button
+                              class="button button--compact button--ghost"
+                              type="button"
+                              :disabled="isCheckingUpdates"
+                              @click="checkForUpdatesNow"
+                            >{{ isCheckingUpdates ? 'Checking...' : 'Check for updates' }}</button>
+                          </div>
+                        </div>
+                        <div v-if="updateCheckStatus" class="settings-about-label">{{ updateCheckStatus }}</div>
+                      </div>
                     </section>
                     <div class="settings-empty">{{ settingsStatus }}</div>
                 </div>
