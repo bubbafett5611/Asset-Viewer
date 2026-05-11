@@ -1,19 +1,15 @@
-name: Windows Build
+name: CI
 
 on:
   push:
     branches:
+      - develop
       - main
-    tags:
-      - "v*"
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  build-windows:
-    name: Build Windows Portable App
+  checks:
+    name: Backend and Frontend Checks
     runs-on: windows-latest
 
     steps:
@@ -25,9 +21,7 @@ jobs:
         with:
           python-version: "3.10"
           cache: "pip"
-          cache-dependency-path: |
-            requirements.txt
-            requirements-build.txt
+          cache-dependency-path: requirements.txt
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -36,7 +30,7 @@ jobs:
           cache: "npm"
 
       - name: Install Python dependencies
-        run: python -m pip install -r requirements.txt -r requirements-build.txt
+        run: python -m pip install -r requirements.txt
 
       - name: Install frontend dependencies
         run: npm ci
@@ -51,24 +45,3 @@ jobs:
         run: |
           npm run lint:frontend
           npm run format:frontend:check
-
-      - name: Build portable Windows app
-        run: python -m PyInstaller --noconfirm packaging/bubba_media_viewer.spec
-
-      - name: Create zip archive
-        shell: pwsh
-        run: Compress-Archive -Path dist\BubbaMediaViewer\* -DestinationPath dist\BubbaMediaViewer-windows-x64.zip
-
-      - name: Upload portable app artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: BubbaMediaViewer-windows-x64
-          path: dist/BubbaMediaViewer-windows-x64.zip
-          if-no-files-found: error
-
-      - name: Publish GitHub release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/BubbaMediaViewer-windows-x64.zip
-          generate_release_notes: true

@@ -489,7 +489,7 @@ dist\BubbaMediaViewer\
 dist\BubbaMediaViewer-windows-x64.zip
 ```
 
-GitHub Actions builds the same portable zip when changes land on `main`, when you run the workflow manually, or when you push a version tag.
+GitHub Actions runs CI checks on `develop` and `main`, and publishes release artifacts from version tags matching `v*`.
 
 To publish a GitHub Release:
 
@@ -499,6 +499,52 @@ git push origin v0.1.0
 ```
 
 Version tags matching `v*` run the Windows build, create a GitHub Release, generate release notes, and attach `BubbaMediaViewer-windows-x64.zip` to the release.
+
+### CI And Release Flow Quick Guide
+
+This repo uses two workflows:
+
+- `.github/workflows/windows-build.yml` (CI): runs backend/frontend checks on pushes to `develop` and `main`.
+- `.github/workflows/windows-release.yml` (Release): runs on pushed tags matching `v*`, builds the portable zip, and publishes a GitHub Release.
+
+Typical flow:
+
+1. Open a feature branch from `develop`.
+2. Merge feature branch into `develop` to run CI checks.
+3. Merge `develop` into `main` when ready to ship.
+4. Create and push a version tag on `main` to publish the release.
+
+Example commands:
+
+```powershell
+# Start feature work from develop
+git checkout develop
+git pull origin develop
+git checkout -b feature/my-change
+
+# After committing, push feature branch and open PR to develop
+git push -u origin feature/my-change
+
+# After PR merge to develop, update local branches
+git checkout develop
+git pull origin develop
+git checkout main
+git pull origin main
+
+# Merge develop into main (or use PR in GitHub)
+git merge --ff-only develop
+git push origin main
+
+# Tag main for release
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Notes:
+
+- Keep tags semantic, for example `v0.1.0`, `v0.1.1`, `v0.2.0`.
+- Create tags from the exact `main` commit you want to release.
+- Create the tag after that PR is merged into `main`.
 
 ### Maintenance Notes
 
