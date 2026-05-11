@@ -106,6 +106,12 @@ export const TagsView = {
     this.scrollSelectedTagIntoView();
   },
   methods: {
+    tagId(tag) {
+      if (!tag || typeof tag !== 'object') {
+        return '';
+      }
+      return String(tag.id || `${String(tag.source || '')}|${String(tag.name || '')}`);
+    },
     scrollSelectedTagIntoView() {
       this.$nextTick(() => {
         this.$refs.tagList?.querySelector('.tag-row.active')?.scrollIntoView({ block: 'nearest' });
@@ -157,10 +163,10 @@ export const TagsView = {
                     <div ref="tagList" class="tag-list" aria-live="polite">
                         <TagRow
                             v-for="tag in visibleTags"
-                            :key="tag.name"
+                        :key="tagId(tag)"
                             :tag="tag"
-                            :active="selectedTag && selectedTag.name === tag.name"
-                            :favorite="isTagFavorite(tag.name)"
+                        :active="selectedTag && tagId(selectedTag) === tagId(tag)"
+                        :favorite="isTagFavorite(tag)"
                             @select="selectTag"
                             @toggle-favorite="toggleTagFavorite"
                         />
@@ -180,7 +186,7 @@ export const TagsView = {
             ></div>
             <TagDetailsPanel
                 :selected-tag="selectedTag"
-                :favorite="selectedTag ? isTagFavorite(selectedTag.name) : false"
+              :favorite="selectedTag ? isTagFavorite(selectedTag) : false"
                 :aliases="selectedTagAliases"
                 :examples="selectedTagExamples"
                 :examples-loading="tagExamplesLoading"

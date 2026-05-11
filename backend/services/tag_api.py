@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import io
+from itertools import chain
 from pathlib import Path
 import re
 import threading
@@ -10,17 +12,45 @@ from urllib.parse import quote_plus, urlparse
 
 import requests
 from bs4 import BeautifulSoup
-from flask import Response, abort, jsonify, request, send_file
+from flask import Response, abort, jsonify, request
 
-from runtime_paths import frontend_root
+from runtime_paths import frontend_root, user_data_dir
 from services import app_context
 
-TAG_LIST_DIR_URL = 'https://github.com/DraconicDragon/dbr-e621-lists-archive/tree/main/tag-lists/danbooru_e621_merged'
-RAW_BASE = 'https://raw.githubusercontent.com/DraconicDragon/dbr-e621-lists-archive/main/tag-lists/danbooru_e621_merged/'
-TAG_LIST_LOCAL = frontend_root() / 'danbooru_e621_merged.csv'
+TAG_LISTS_ROOT_URL = 'https://github.com/DraconicDragon/dbr-e621-lists-archive/tree/main/tag-lists/'
+RAW_LISTS_ROOT = 'https://raw.githubusercontent.com/DraconicDragon/dbr-e621-lists-archive/main/tag-lists/'
+SOURCE_FILE_TOKEN = 'pt20'
+SOURCE_TAG_LISTS = {
+    'danbooru': {
+        'tree_url': TAG_LISTS_ROOT_URL + 'danbooru',
+        'raw_base': RAW_LISTS_ROOT + 'danbooru/',
+    },
+    'e621': {
+        'tree_url': TAG_LISTS_ROOT_URL + 'e621',
+        'raw_base': RAW_LISTS_ROOT + 'e621/',
+    },
+}
+SOURCE_CATEGORY_NAMES: dict[str, dict[str, str]] = {
+    'danbooru': {
+        '0': 'general',
+        '1': 'artist',
+        '3': 'copyright',
+        '4': 'character',
+        '5': 'meta',
+    },
+    'e621': {
+        '0': 'general',
+        '1': 'artist',
+        '3': 'copyright',
+        '4': 'character',
+        '5': 'species',
+        '6': 'invalid',
+        '7': 'meta',
+        '8': 'lore',
+    },
+}
 FALLBACK_FETCH_LIMIT = 50
 DISALLOWED_EXTS = {'.webm', '.mp4', '.gif'}
-TAG_LIST_HEADER = 'name,category,count,aliases'
 
 _tag_list_lock = threading.Lock()
 _tag_list_ready = False
@@ -52,6 +82,162 @@ def _fetch_text(url: str, headers: dict[str, Any] | None = None, timeout: int = 
         return response.text or ''
     except Exception:
         return ''
+
+
+def _read_csv_rows(path: Path) -> list[dict[str, str]]:
+    with open(path, 'r', encoding='utf-8', newline='') as handle:
+        reader = csv.reader(handle)
+        first_row = next(reader, None)
+        if first_row is None:
+            return []
+
+        normalized = [value.strip().lower() for value in first_row]
+        has_header = len(normalized) >= 3 and normalized[:3] == ['name', 'category', 'count']
+
+        rows: list[dict[str, str]] = []
+        if has_header:
+            for row in csv.DictReader(handle, fieldnames=first_row):
+                rows.append(
+                    {
+                        'name': str(row.get('name') or ''),
+                        'category': str(row.get('category') or ''),
+                        'count': str(row.get('count') or ''),
+                        'aliases': str(row.get('aliases') or ''),
+                    }
+                )
+            return rows
+
+        for row in chain([first_row], reader):
+            if not row:
+                continue
+            if len(row) < 3:
+                continue
+            aliases = ','.join(row[3:]) if len(row) > 3 else ''
+            rows.append(
+                {
+                    'name': str(row[0] or ''),
+                    'category': str(row[1] or ''),
+                    'count': str(row[2] or ''),
+                    'aliases': str(aliases or ''),
+                }
+            )
+        return rows
+
+
+def _list_remote_pt20_csvs(tree_url: str) -> list[str]:
+    html = _fetch_text(tree_url)
+    if not html:
+        return []
+    soup = BeautifulSoup(html, 'html.parser')
+    files = [
+        link.text.strip()
+        for link in soup.find_all('a', href=True)
+        if link.text.strip().lower().endswith('.csv') and SOURCE_FILE_TOKEN in link.text.strip().lower()
+    ]
+    return sorted(set(files), reverse=True)
+
+
+def _source_search_roots() -> list[Path]:
+    roots = [frontend_root(), user_data_dir() / 'tags']
+    unique: list[Path] = []
+    for root in roots:
+        if root not in unique:
+            unique.append(root)
+    return unique
+
+
+def _download_missing_source_tag_lists() -> None:
+    search_roots = _source_search_roots()
+    write_roots = [frontend_root(), user_data_dir() / 'tags']
+
+    for source, config in SOURCE_TAG_LISTS.items():
+        files = _list_remote_pt20_csvs(config['tree_url'])
+        if not files:
+            app_context.logger.warning('No %s pt20 CSV files found at %s', source, config['tree_url'])
+            continue
+        latest_filename = files[0]
+        if any((root / latest_filename).exists() for root in search_roots):
+            continue
+
+        csv_text = _fetch_text(config['raw_base'] + latest_filename)
+        if not csv_text:
+            app_context.logger.warning('Failed to fetch latest %s pt20 CSV: %s', source, latest_filename)
+            continue
+
+        wrote = False
+        for root in write_roots:
+            path = root / latest_filename
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(csv_text, encoding='utf-8', newline='')
+                app_context.logger.info('Downloaded missing %s source CSV: %s', source, path)
+                wrote = True
+                break
+            except OSError:
+                continue
+        if not wrote:
+            app_context.logger.warning('Could not write latest %s pt20 CSV to local storage: %s', source, latest_filename)
+
+
+def _find_latest_source_csv(root: Path, token: str) -> Path | None:
+    if not root.exists() or not root.is_dir():
+        return None
+    candidates = [
+        path
+        for path in root.rglob('*.csv')
+        if token in path.name.lower()
+        and SOURCE_FILE_TOKEN in path.name.lower()
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def _resolve_source_csv_files() -> dict[str, Path]:
+    roots = _source_search_roots()
+    source_files: dict[str, Path] = {}
+    for source, token in (('danbooru', 'danbooru'), ('e621', 'e621')):
+        chosen: Path | None = None
+        for root in roots:
+            candidate = _find_latest_source_csv(root, token)
+            if candidate is not None:
+                chosen = candidate
+                break
+        if chosen is not None:
+            source_files[source] = chosen
+    return source_files
+
+
+def _category_name(source: str, source_category: str) -> str:
+    category_map = SOURCE_CATEGORY_NAMES.get(source, {})
+    code = str(source_category or '').strip()
+    if code in category_map:
+        return category_map[code]
+    return f'unknown:{code}' if code else 'unknown'
+
+
+def _load_tag_rows() -> list[dict[str, str]]:
+    source_files = _resolve_source_csv_files()
+    missing_sources = [source for source in SOURCE_TAG_LISTS if source not in source_files]
+    if missing_sources:
+        missing_str = ', '.join(missing_sources)
+        raise RuntimeError(f'Missing source tag CSV files for: {missing_str}')
+
+    merged_rows: list[dict[str, str]] = []
+    for source in ('danbooru', 'e621'):
+        for row in _read_csv_rows(source_files[source]):
+            source_category = row['category']
+            merged_rows.append(
+                {
+                    'name': row['name'],
+                    'category': _category_name(source, source_category),
+                    'count': row['count'],
+                    'aliases': row['aliases'],
+                    'source': source,
+                    'source_category': source_category,
+                }
+            )
+    return merged_rows
 
 
 def _fetch_json_list(url: str, headers: dict[str, Any] | None = None, timeout: int = 12, list_key: str | None = None) -> list[Any]:
@@ -176,38 +362,17 @@ def _pick_best_post(posts: Any, image_getter, score_getter) -> tuple[dict[str, A
 
 def ensure_tag_list() -> None:
     global _tag_list_ready
+
     with _tag_list_lock:
         if _tag_list_ready:
             return
-    if not TAG_LIST_LOCAL.exists():
-        html = _fetch_text(TAG_LIST_DIR_URL)
-        if not html:
-            raise RuntimeError('Failed to fetch tag list directory listing.')
-        soup = BeautifulSoup(html, 'html.parser')
-        files = [link.text for link in soup.find_all('a', href=True) if link.text.endswith('.csv')]
-        if not files:
-            raise RuntimeError('No CSV files found in tag list directory.')
-        files.sort(reverse=True)
-        raw_text = _fetch_text(RAW_BASE + files[0])
-        if not raw_text:
-            raise RuntimeError(f'Failed to fetch tag list file: {RAW_BASE + files[0]}')
-        lines = raw_text.splitlines()
-        if not lines[0].lower().startswith(TAG_LIST_HEADER):
-            lines.insert(0, TAG_LIST_HEADER)
-        TAG_LIST_LOCAL.parent.mkdir(parents=True, exist_ok=True)
-        with open(TAG_LIST_LOCAL, 'w', encoding='utf-8', newline='') as handle:
-            writer = csv.writer(handle)
-            for row in csv.reader(lines):
-                writer.writerow(row)
-    else:
-        with open(TAG_LIST_LOCAL, 'r', encoding='utf-8') as handle:
-            lines = handle.read().splitlines()
-        if lines and not lines[0].lower().startswith(TAG_LIST_HEADER):
-            lines.insert(0, TAG_LIST_HEADER)
-            with open(TAG_LIST_LOCAL, 'w', encoding='utf-8', newline='') as handle:
-                for line in lines:
-                    handle.write(line + '\n')
-    _tag_list_ready = True
+        _download_missing_source_tag_lists()
+        source_files = _resolve_source_csv_files()
+        missing_sources = [source for source in SOURCE_TAG_LISTS if source not in source_files]
+        if missing_sources:
+            missing_str = ', '.join(missing_sources)
+            raise RuntimeError(f'Missing source tag CSV files for: {missing_str}')
+        _tag_list_ready = True
 
 
 def _ensure_tag_list_available():
@@ -215,7 +380,7 @@ def _ensure_tag_list_available():
         ensure_tag_list()
         return None
     except Exception as error:
-        app_context.logger.exception('Failed to ensure local tag list is available')
+        app_context.logger.exception('Failed to ensure source tag lists are available')
         return jsonify({'error': f'Failed to prepare tag list: {error}'}), 503
 
 
@@ -269,7 +434,13 @@ def serve_tag_csv_handler():
     failure = _ensure_tag_list_available()
     if failure is not None:
         return failure
-    return send_file(TAG_LIST_LOCAL, mimetype='text/csv')
+    rows = _load_tag_rows()
+    output = io.StringIO()
+    writer = csv.writer(output, lineterminator='\n')
+    writer.writerow(['name', 'category', 'count', 'aliases'])
+    for row in rows:
+        writer.writerow([row.get('name', ''), row.get('category', ''), row.get('count', ''), row.get('aliases', '')])
+    return Response(output.getvalue(), mimetype='text/csv')
 
 
 def api_tags_handler():
@@ -288,20 +459,18 @@ def api_tags_handler():
     tags: list[dict[str, Any]] = []
     categories: set[str] = set()
     matched_count = 0
-    with open(TAG_LIST_LOCAL, 'r', encoding='utf-8') as handle:
-        reader = csv.DictReader(handle)
-        for row in reader:
-            row_category = str(row.get('category') or '')
-            categories.add(row_category)
-            if category and row_category != category:
+    for row in _load_tag_rows():
+        row_category = str(row.get('category') or '')
+        categories.add(row_category)
+        if category and row_category != category:
+            continue
+        if normalized_query:
+            search_blob = re.sub(r'[\s_-]+', '_', f"{row.get('name', '')} {row.get('aliases', '')}".lower())
+            if normalized_query not in search_blob:
                 continue
-            if normalized_query:
-                search_blob = re.sub(r'[\s_-]+', '_', f"{row.get('name', '')} {row.get('aliases', '')}".lower())
-                if normalized_query not in search_blob:
-                    continue
-            if matched_count >= offset and len(tags) < limit:
-                tags.append(row)
-            matched_count += 1
+        if matched_count >= offset and len(tags) < limit:
+            tags.append(row)
+        matched_count += 1
     return jsonify(
         {
             'tags': tags,
