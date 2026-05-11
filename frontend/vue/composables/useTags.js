@@ -28,15 +28,40 @@ export function useTags(options) {
   let tagSearchTimer = null;
   let tagExampleRequestId = 0;
 
+  function tagIdentity(tag) {
+    if (!tag || typeof tag !== 'object') {
+      return '';
+    }
+    if (tag.id) {
+      return String(tag.id);
+    }
+    return `${String(tag.source || '')}|${String(tag.name || '')}`;
+  }
+
+  function isTagStored(listOrSet, tag) {
+    const id = tagIdentity(tag);
+    const name = String(tag?.name || '');
+    if (!id && !name) {
+      return false;
+    }
+    if (listOrSet instanceof Set) {
+      return (id && listOrSet.has(id)) || (name && listOrSet.has(name));
+    }
+    if (Array.isArray(listOrSet)) {
+      return (id && listOrSet.includes(id)) || (name && listOrSet.includes(name));
+    }
+    return false;
+  }
+
   const tagCategories = computed(() => tagCategoriesList.value);
   const filteredTags = computed(() => {
     const q = normalizeTagQuery(tagFilters.q);
 
     return tags.value.filter((tag) => {
-      if (tagFilters.view === 'favorites' && !favoriteTagNames.value.has(tag.name)) {
+      if (tagFilters.view === 'favorites' && !isTagStored(favoriteTagNames.value, tag)) {
         return false;
       }
-      if (tagFilters.view === 'recent' && !recentTagNames.value.includes(tag.name)) {
+      if (tagFilters.view === 'recent' && !isTagStored(recentTagNames.value, tag)) {
         return false;
       }
       if (!q) {
@@ -85,7 +110,10 @@ export function useTags(options) {
       const payload = await response.json();
       const incoming = Array.isArray(payload.tags) ? payload.tags : [];
       const normalizedIncoming = incoming.map((tag) => ({
+        id: String(tag.id || `${String(tag.source || '')}|${String(tag.name || '')}`),
         name: String(tag.name || ''),
+        source: String(tag.source || ''),
+        sourceCategory: String(tag.source_category || ''),
         category: String(tag.category || ''),
         count: Number(tag.count || 0),
         aliases: String(tag.aliases || '')
@@ -101,7 +129,8 @@ export function useTags(options) {
       tagStatusText.value = `Loaded ${tags.value.length} of ${tagTotal.value} tag(s).`;
 
       if (selectedTag.value) {
-        const refreshed = tags.value.find((tag) => tag.name === selectedTag.value.name);
+        const selectedId = tagIdentity(selectedTag.value);
+        const refreshed = tags.value.find((tag) => tagIdentity(tag) === selectedId);
         selectedTag.value = refreshed || null;
       }
     } catch (error) {
@@ -112,8 +141,12 @@ export function useTags(options) {
     }
   }
 
-  function isTagFavorite(tagName) {
-    return favoriteTagNames.value.has(tagName);
+  function isTagFavorite(tagOrName) {
+    if (tagOrName && typeof tagOrName === 'object') {
+      return isTagStored(favoriteTagNames.value, tagOrName);
+    }
+    const name = String(tagOrName || '');
+    return favoriteTagNames.value.has(name);
   }
 
   function persistFavorites() {
@@ -129,11 +162,14 @@ export function useTags(options) {
       return;
     }
 
+    const tagId = tagIdentity(tag);
     const next = new Set(favoriteTagNames.value);
-    if (next.has(tag.name)) {
+    if (tagId && next.has(tagId)) {
+      next.delete(tagId);
+    } else if (next.has(tag.name)) {
       next.delete(tag.name);
     } else {
-      next.add(tag.name);
+      next.add(tagId || tag.name);
     }
 
     favoriteTagNames.value = next;
@@ -176,7 +212,11 @@ export function useTags(options) {
 
   function setSelectedTag(tag) {
     selectedTag.value = tag;
-    recentTagNames.value = [tag.name, ...recentTagNames.value.filter((name) => name !== tag.name)].slice(0, 50);
+    const tagId = tagIdentity(tag) || tag.name;
+    recentTagNames.value = [
+      tagId,
+      ...recentTagNames.value.filter((value) => value !== tagId && value !== tag.name)
+    ].slice(0, 50);
     persistRecent();
   }
 
@@ -190,7 +230,8 @@ export function useTags(options) {
       return;
     }
 
-    const currentIndex = visibleTags.value.findIndex((tag) => tag.name === selectedTag.value?.name);
+    const selectedId = tagIdentity(selectedTag.value);
+    const currentIndex = visibleTags.value.findIndex((tag) => tagIdentity(tag) === selectedId);
     const fallbackIndex = delta > 0 ? -1 : visibleTags.value.length;
     const nextIndex = Math.min(
       visibleTags.value.length - 1,

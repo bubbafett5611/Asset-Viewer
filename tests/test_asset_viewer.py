@@ -731,15 +731,25 @@ def test_delete_safe_mode_moves_file_to_trash(client, asset_root):
 
 
 def test_tags_are_paged_and_search_normalizes_spaces(tmp_path, monkeypatch):
-    tag_csv = tmp_path / "tags.csv"
-    tag_csv.write_text(
+    source_dir = tmp_path / "sources"
+    source_dir.mkdir()
+    danbooru_csv = source_dir / "danbooru_tags_pt20_202605.csv"
+    danbooru_csv.write_text(
         "name,category,count,aliases\n"
         "red_hair,0,10,red hair|scarlet_hair\n"
-        "blue_hair,0,7,azure hair\n"
-        "solo,0,99,alone\n",
+        "blue_hair,0,7,azure hair\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(tag_api, "TAG_LIST_LOCAL", tag_csv)
+    e621_csv = source_dir / "e621_tags_pt20_202605.csv"
+    e621_csv.write_text(
+        "name,category,count,aliases\n"
+        "solo,1,99,alone\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(tag_api, "frontend_root", lambda: source_dir)
+    monkeypatch.setattr(tag_api, "user_data_dir", lambda: tmp_path / "appdata")
+    monkeypatch.setattr(tag_api, "_download_missing_source_tag_lists", lambda: None)
+    monkeypatch.setattr(tag_api, "_tag_list_ready", False)
     server.app.config.update(TESTING=True)
 
     with server.app.test_client() as test_client:
@@ -753,3 +763,76 @@ def test_tags_are_paged_and_search_normalizes_spaces(tmp_path, monkeypatch):
     assert search.status_code == 200
     assert [tag["name"] for tag in search.get_json()["tags"]] == ["red_hair"]
     assert invalid.status_code == 400
+
+
+def test_tags_can_load_danbooru_and_e621_source_csvs(tmp_path, monkeypatch):
+    source_dir = tmp_path / "sources"
+    source_dir.mkdir()
+    danbooru_csv = source_dir / "danbooru_tags_pt20_202605.csv"
+    danbooru_csv.write_text(
+        "name,category,count,aliases\n"
+        "red_hair,0,10,scarlet_hair\n",
+        encoding="utf-8",
+    )
+    e621_csv = source_dir / "e621_tags_pt20_202605.csv"
+    e621_csv.write_text(
+        "name,category,count,aliases\n"
+        "canine,1,22,dog\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(tag_api, "frontend_root", lambda: source_dir)
+    monkeypatch.setattr(tag_api, "user_data_dir", lambda: tmp_path / "appdata")
+    monkeypatch.setattr(tag_api, "_download_missing_source_tag_lists", lambda: None)
+    monkeypatch.setattr(tag_api, "_tag_list_ready", False)
+    server.app.config.update(TESTING=True)
+
+    with server.app.test_client() as test_client:
+        all_tags = test_client.get("/api/tags?limit=10")
+        general_tags = test_client.get("/api/tags?category=general")
+        artist_tags = test_client.get("/api/tags?category=artist")
+
+    assert all_tags.status_code == 200
+    payload = all_tags.get_json()
+    assert payload["total"] == 2
+    assert {tag["name"] for tag in payload["tags"]} == {"red_hair", "canine"}
+    assert {tag["source"] for tag in payload["tags"]} == {"danbooru", "e621"}
+    assert set(payload["categories"]) == {"general", "artist"}
+
+    assert general_tags.status_code == 200
+    assert [tag["name"] for tag in general_tags.get_json()["tags"]] == ["red_hair"]
+
+    assert artist_tags.status_code == 200
+    assert [tag["name"] for tag in artist_tags.get_json()["tags"]] == ["canine"]
+
+
+def test_tags_can_parse_headerless_pt20_source_csvs(tmp_path, monkeypatch):
+    source_dir = tmp_path / "sources"
+    source_dir.mkdir()
+    danbooru_csv = source_dir / "danbooru_2026-04-01_pt20-ia-dd.csv"
+    danbooru_csv.write_text(
+        "1girl,0,7641780,sole_female\n"
+        "highres,5,7237856,high_resolution\n",
+        encoding="utf-8",
+    )
+    e621_csv = source_dir / "e621_2026-04-01_pt20-ia-ed.csv"
+    e621_csv.write_text(
+        "anthro,0,4156082,anthropomorphic\n"
+        "male,0,3093404,boy\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(tag_api, "frontend_root", lambda: source_dir)
+    monkeypatch.setattr(tag_api, "user_data_dir", lambda: tmp_path / "appdata")
+    monkeypatch.setattr(tag_api, "_download_missing_source_tag_lists", lambda: None)
+    monkeypatch.setattr(tag_api, "_tag_list_ready", False)
+    server.app.config.update(TESTING=True)
+
+    with server.app.test_client() as test_client:
+        response = test_client.get("/api/tags?limit=10")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["total"] == 4
+    assert {tag["name"] for tag in payload["tags"]} == {"1girl", "highres", "anthro", "male"}
+    assert set(payload["categories"]) == {"general", "meta"}
