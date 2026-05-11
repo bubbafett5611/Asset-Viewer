@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 from flask import abort, send_file
 
+from runtime_paths import frontend_root
 
-FRONTEND_ROOT = Path(__file__).resolve().parents[2] / 'frontend'
+
+FRONTEND_ROOT = frontend_root()
 
 
 def index_handler():

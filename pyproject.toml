@@ -1,8 +1,8 @@
 [project]
 name = "asset-viewer-standalone"
 version = "0.1.0"
-description = "Standalone asset viewer webapp (backend + frontend)"
-authors = ["BubbaNodes <metalgfx@gmail.com>"]
+description = "Standalone media asset viewer."
+authors = ["Bubbafett5611"]
 license = "MIT"
 
 [tool.setuptools]

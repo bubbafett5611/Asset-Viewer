@@ -22,8 +22,10 @@ from pydantic_settings import (
 	SettingsConfigDict,
 )
 
+from runtime_paths import ensure_settings_file, settings_file
 
-DEFAULT_SETTINGS_FILE = Path(__file__).parent.parent / "settings.json"
+
+DEFAULT_SETTINGS_FILE = ensure_settings_file(settings_file())
 
 
 class Density(StrEnum):
