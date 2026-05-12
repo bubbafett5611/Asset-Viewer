@@ -1,6 +1,8 @@
 export const API = {
   roots: '/api/roots',
   settings: '/api/settings',
+  appInfo: '/api/app/info',
+  updateLatest: '/api/update/latest',
   list: '/api/assets/list',
   duplicates: '/api/assets/duplicates',
   duplicatesStream: '/api/assets/duplicates/stream',

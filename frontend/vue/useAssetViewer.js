@@ -14,6 +14,9 @@ import { useViewerProps } from '/vue/composables/useViewerProps.js';
 const FAVORITES_KEY = 'bubba_asset_viewer_tag_favorites';
 const RECENT_KEY = 'bubba_asset_viewer_tag_recent';
 const SETTINGS_KEY = 'bubba_asset_viewer_settings';
+const UPDATE_NOTICE_KEY = 'bubba_asset_viewer_update_notice';
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const UPDATE_SNOOZE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const ALLOWED_UPLOAD_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tif', '.tiff']);
 const PREVIEWABLE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tif', '.tiff']);
 const METADATA_FILTERS = [
@@ -47,6 +50,47 @@ function loadObjectFromStorage(key) {
   } catch {
     return {};
   }
+}
+
+function saveObjectToStorage(key, value) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // ignore localStorage write failures
+  }
+}
+
+function normalizeVersion(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^v/i, '');
+}
+
+function parseVersion(value) {
+  const raw = normalizeVersion(value);
+  if (!raw) {
+    return [0, 0, 0];
+  }
+  // Compare versions as major.minor.patch and ignore any additional segments.
+  const [major = '0', minor = '0', patch = '0'] = raw.split('.').slice(0, 3);
+  return [major, minor, patch].map((part) => {
+    const numeric = Number.parseInt(String(part).replace(/[^0-9].*$/, ''), 10);
+    return Number.isFinite(numeric) ? numeric : 0;
+  });
+}
+
+function isVersionGreater(candidate, current) {
+  const a = parseVersion(candidate);
+  const b = parseVersion(current);
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] > b[index]) {
+      return true;
+    }
+    if (a[index] < b[index]) {
+      return false;
+    }
+  }
+  return false;
 }
 
 function saveArrayToStorage(key, value) {
@@ -201,6 +245,23 @@ export function useAssetViewerState() {
   const isLoadingSettings = ref(false);
   const isSavingSettings = ref(false);
   const settingsListDrafts = reactive({});
+  const appVersion = ref('0.0.0');
+  const appRepo = ref('');
+  const appReleasePageUrl = ref('');
+  const isCheckingUpdates = ref(false);
+  const updateCheckStatus = ref('');
+
+  const updateNoticeState = reactive({
+    currentVersion: '0.0.0',
+    lastCheckedAt: 0,
+    latestVersion: '',
+    latestName: '',
+    latestUrl: '',
+    skippedVersion: '',
+    snoozedVersion: '',
+    snoozeUntil: 0
+  });
+  const updateNotice = ref(null);
 
   const favoriteTagNames = ref(new Set(loadArrayFromStorage(FAVORITES_KEY)));
   const recentTagNames = ref(loadArrayFromStorage(RECENT_KEY));
@@ -264,7 +325,6 @@ export function useAssetViewerState() {
 
   const {
     tagCategories,
-    filteredTags,
     visibleTags,
     tagHasMore,
     tagCountText,
@@ -400,6 +460,21 @@ export function useAssetViewerState() {
     }
     if (!filters.root && roots.value.length > 0) {
       filters.root = roots.value[0].key;
+    }
+  }
+
+  async function fetchAppInfo() {
+    try {
+      const response = await fetch(API.appInfo);
+      if (!response.ok) {
+        return;
+      }
+      const payload = await response.json();
+      appVersion.value = String(payload.current_version || appVersion.value || '0.0.0');
+      appRepo.value = String(payload.repo || '');
+      appReleasePageUrl.value = String(payload.release_page_url || '');
+    } catch {
+      // ignore app info failures; app can continue without this metadata
     }
   }
 
@@ -752,6 +827,183 @@ export function useAssetViewerState() {
     requestDeleteSelected
   });
 
+  function loadUpdateNoticeState() {
+    const saved = loadObjectFromStorage(UPDATE_NOTICE_KEY);
+    updateNoticeState.currentVersion = String(saved.currentVersion || '0.0.0');
+    updateNoticeState.lastCheckedAt = Number(saved.lastCheckedAt) || 0;
+    updateNoticeState.latestVersion = String(saved.latestVersion || '');
+    updateNoticeState.latestName = String(saved.latestName || '');
+    updateNoticeState.latestUrl = String(saved.latestUrl || '');
+    updateNoticeState.skippedVersion = String(saved.skippedVersion || '');
+    updateNoticeState.snoozedVersion = String(saved.snoozedVersion || '');
+    updateNoticeState.snoozeUntil = Number(saved.snoozeUntil) || 0;
+  }
+
+  function persistUpdateNoticeState() {
+    saveObjectToStorage(UPDATE_NOTICE_KEY, {
+      currentVersion: updateNoticeState.currentVersion,
+      lastCheckedAt: updateNoticeState.lastCheckedAt,
+      latestVersion: updateNoticeState.latestVersion,
+      latestName: updateNoticeState.latestName,
+      latestUrl: updateNoticeState.latestUrl,
+      skippedVersion: updateNoticeState.skippedVersion,
+      snoozedVersion: updateNoticeState.snoozedVersion,
+      snoozeUntil: updateNoticeState.snoozeUntil
+    });
+  }
+
+  function shouldShowUpdateNotice(version) {
+    const now = Date.now();
+    if (!version) {
+      return false;
+    }
+    if (updateNoticeState.skippedVersion === version) {
+      return false;
+    }
+    if (updateNoticeState.snoozedVersion === version && now < updateNoticeState.snoozeUntil) {
+      return false;
+    }
+    return true;
+  }
+
+  function isAutoUpdateCheckEnabled() {
+    const flag = appSettings.value?.updates?.auto_check_enabled;
+    if (typeof flag === 'boolean') {
+      return flag;
+    }
+    return true;
+  }
+
+  function setUpdateNoticeFromState(currentVersion) {
+    const version = updateNoticeState.latestVersion;
+    if (!version || !isVersionGreater(version, currentVersion) || !shouldShowUpdateNotice(version)) {
+      updateNotice.value = null;
+      return;
+    }
+    updateNotice.value = {
+      currentVersion,
+      latestVersion: version,
+      latestName: updateNoticeState.latestName,
+      latestUrl: updateNoticeState.latestUrl
+    };
+  }
+
+  async function checkForUpdates(options = {}) {
+    const { force = false, userInitiated = false } = options;
+    if (userInitiated && isCheckingUpdates.value) {
+      return;
+    }
+
+    if (userInitiated) {
+      isCheckingUpdates.value = true;
+      updateCheckStatus.value = 'Checking for updates...';
+    }
+
+    loadUpdateNoticeState();
+    const now = Date.now();
+    const recentlyChecked = now - updateNoticeState.lastCheckedAt < UPDATE_CHECK_INTERVAL_MS;
+
+    if (force) {
+      updateNoticeState.lastCheckedAt = 0;
+      persistUpdateNoticeState();
+    }
+
+    try {
+      if (!force && recentlyChecked && updateNoticeState.latestVersion) {
+        setUpdateNoticeFromState(updateNoticeState.currentVersion);
+        if (userInitiated) {
+          if (updateNotice.value) {
+            updateCheckStatus.value = `Update available: v${updateNotice.value.latestVersion}.`;
+          } else {
+            updateCheckStatus.value = 'You are already on the latest version.';
+          }
+        }
+        return;
+      }
+
+      const response = await fetch(API.updateLatest, {
+        cache: force ? 'no-store' : 'default',
+        headers: force ? { 'Cache-Control': 'no-cache' } : undefined
+      });
+      if (!response.ok) {
+        if (userInitiated) {
+          updateCheckStatus.value = `Update check failed (${response.status}).`;
+        }
+        return;
+      }
+      const payload = await response.json();
+      const currentVersion = String(payload.current_version || '0.0.0');
+      const latestVersion = normalizeVersion(payload.latest_version || '');
+
+      updateNoticeState.currentVersion = currentVersion;
+      updateNoticeState.lastCheckedAt = now;
+      updateNoticeState.latestVersion = latestVersion;
+      updateNoticeState.latestName = String(payload.latest_name || payload.latest_tag || '');
+      updateNoticeState.latestUrl = String(payload.latest_url || '');
+      persistUpdateNoticeState();
+
+      if (isVersionGreater(latestVersion, currentVersion) && shouldShowUpdateNotice(latestVersion)) {
+        updateNotice.value = {
+          currentVersion,
+          latestVersion,
+          latestName: updateNoticeState.latestName,
+          latestUrl: updateNoticeState.latestUrl
+        };
+        if (userInitiated) {
+          updateCheckStatus.value = `Update available: v${latestVersion}.`;
+        }
+      } else {
+        updateNotice.value = null;
+        if (userInitiated) {
+          updateCheckStatus.value = 'You are already on the latest version.';
+        }
+      }
+    } catch {
+      // ignore update check failures; app should continue silently
+      if (userInitiated) {
+        updateCheckStatus.value = 'Update check failed. Please try again.';
+      }
+    } finally {
+      if (userInitiated) {
+        isCheckingUpdates.value = false;
+      }
+    }
+  }
+
+  async function checkForUpdatesNow() {
+    await checkForUpdates({ force: true, userInitiated: true });
+  }
+
+  function openUpdateRelease() {
+    if (!updateNotice.value?.latestUrl) {
+      return;
+    }
+    window.open(updateNotice.value.latestUrl, '_blank', 'noopener,noreferrer');
+  }
+
+  function snoozeUpdateNotice() {
+    if (!updateNotice.value?.latestVersion) {
+      return;
+    }
+    updateNoticeState.snoozedVersion = updateNotice.value.latestVersion;
+    updateNoticeState.snoozeUntil = Date.now() + UPDATE_SNOOZE_INTERVAL_MS;
+    persistUpdateNoticeState();
+    updateNotice.value = null;
+  }
+
+  function skipUpdateVersion() {
+    if (!updateNotice.value?.latestVersion) {
+      return;
+    }
+    updateNoticeState.skippedVersion = updateNotice.value.latestVersion;
+    if (updateNoticeState.snoozedVersion === updateNotice.value.latestVersion) {
+      updateNoticeState.snoozedVersion = '';
+      updateNoticeState.snoozeUntil = 0;
+    }
+    persistUpdateNoticeState();
+    updateNotice.value = null;
+  }
+
   async function responseErrorMessage(response, fallback) {
     try {
       const text = await response.text();
@@ -978,6 +1230,12 @@ export function useAssetViewerState() {
     exportMetadataHealth,
     settingsSections,
     settingsStatus,
+    appVersion,
+    appRepo,
+    appReleasePageUrl,
+    isCheckingUpdates,
+    updateCheckStatus,
+    checkForUpdatesNow,
     isSavingSettings,
     settingsFieldValue,
     settingsListValue,
@@ -1008,6 +1266,8 @@ export function useAssetViewerState() {
     scheduleTagSearch,
     clearTagSearchTimer,
     fetchSettings,
+    fetchAppInfo,
+    isAutoUpdateCheckEnabled,
     fetchRoots,
     statusText,
     onWindowDragEnter,
@@ -1016,7 +1276,8 @@ export function useAssetViewerState() {
     onWindowDrop,
     hideDropOverlay,
     measureAssetList,
-    onDocumentKeydown
+    onDocumentKeydown,
+    checkForUpdates
   });
 
   return {
@@ -1028,6 +1289,10 @@ export function useAssetViewerState() {
     isDropOverlayVisible,
     isDeleteConfirmVisible,
     isShortcutsModalVisible,
+    updateNotice,
+    appVersion,
+    appRepo,
+    appReleasePageUrl,
     currentRootLabel,
     duplicateTaskId,
     duplicateTaskStatusText,
@@ -1039,6 +1304,9 @@ export function useAssetViewerState() {
     closeCompare,
     fileUrl,
     hideDeleteConfirm,
+    openUpdateRelease,
+    snoozeUpdateNotice,
+    skipUpdateVersion,
     hideShortcutsModal,
     showShortcutsModal,
     confirmDelete,

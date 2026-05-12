@@ -43,6 +43,14 @@ class ViewerSettings(BaseModel):
 	preview: bool = Field(default=False, title="Blur All", description="Blur all media thumbnails.")
 
 
+class UpdateSettings(BaseModel):
+	auto_check_enabled: bool = Field(
+		default=True,
+		title="Automatic Update Checks",
+		description="Automatically check for updates when the app starts.",
+	)
+
+
 class Settings(BaseSettings):
 	model_config = SettingsConfigDict(
 		env_prefix="BUBBA_ASSET_VIEWER_",
@@ -53,6 +61,7 @@ class Settings(BaseSettings):
 
 	general: GeneralSettings = Field(default_factory=GeneralSettings, title="General")
 	viewer: ViewerSettings = Field(default_factory=ViewerSettings, title="Viewer")
+	updates: UpdateSettings = Field(default_factory=UpdateSettings, title="Updates")
 
 	@classmethod
 	def settings_customise_sources(
