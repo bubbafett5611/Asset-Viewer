@@ -57,3 +57,4 @@ node_modules/
 .pytest_tmp/
 settings.json
 frontend/*.csv
+QA_COMPREHENSIVE_REVIEW_2026_05_12.md
