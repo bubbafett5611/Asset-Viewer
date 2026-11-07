@@ -1,111 +1,18 @@
 # Bubba Media Viewer
 
-Bubba Media Viewer is a fast local web app for browsing, inspecting, comparing, and cleaning up image-heavy folders. It is built for generated-image libraries, Stability Matrix output folders, asset collections, prompt experiments, reference dumps, and any directory where normal file explorers start to feel clumsy.
+A local desktop web app for browsing image libraries, inspecting generation metadata, comparing results, and cleaning up duplicates. Your media stays on your machine.
 
-The app runs on your machine and works directly with folders you choose. Point it at one or more asset roots in `settings.json`, start the local server, and open the viewer in your browser. From there you get a purpose-built media workflow: dense thumbnail browsing, metadata inspection, tag lookup, duplicate cleanup, image comparison, exports, and keyboard-first navigation.
+![Bubba Media Viewer with a synthetic demonstration library](docs/media-viewer.png)
 
-## Who It Is For
+Use the left sidebar to switch sections and browse media roots, folders, and saved views. The center holds your results; the resizable inspector shows the selected file. Designed for desktop windows at least 1024 × 768.
 
-Bubba Media Viewer is for people who have outgrown ordinary file explorers for image work. If your folders are full of generation batches, upscales, edits, references, test renders, duplicate candidates, and prompt experiments, the viewer gives you a focused place to sort through them.
-
-It fits especially well for:
-
-- AI image generation workflows with large output folders.
-- Stability Matrix users who want a cleaner way to review generated images.
-- Artists and asset collectors managing reference libraries.
-- Prompt builders who want tag lookup next to their media.
-- Dataset and model-prep workflows where metadata quality matters.
-- Anyone who wants local file management without uploading private images to a hosted tool.
-
-## Why Use It?
-
-Big image folders get messy quickly. A generation session can leave you with hundreds or thousands of similar outputs, vague filenames, repeated prompts, partial metadata, and near-identical images scattered across subfolders. Bubba Media Viewer gives that mess a proper workspace.
-
-Instead of opening files one by one, you can scan a whole folder visually, filter it down, inspect metadata, copy useful paths or tags, compare candidates, find duplicates, and safely clean up files without leaving the browser.
-
-It is especially useful when you want to:
-
-- Review large batches of generated images.
-- Find the best result among many similar outputs.
-- Clean duplicate or near-duplicate images from a folder.
-- Inspect prompt and generation metadata quickly.
-- Copy images or paths into other tools.
-- Browse tag vocabularies while building prompts.
-- Keep local asset folders organized without uploading anything to a hosted service.
-
-## What Makes It Different
-
-Most image tools are either general file managers, single-image editors, or cloud galleries. Bubba Media Viewer is narrower on purpose: it is built around the repeated chores that happen after image generation or collection work.
-
-- It treats folders as working libraries, not just directories.
-- It keeps media browsing, metadata, tags, duplicates, and cleanup in one interface.
-- It favors dense, practical controls over decorative gallery layouts.
-- It supports keyboard-heavy review sessions where speed matters.
-- It keeps destructive actions explicit, with safe delete as the default.
-- It is local-first, so your files stay on your machine.
-
-## What You Can Do
-
-### Browse Local Media Like A Workspace
-
-Open your configured image roots in a browser interface built for scanning. The Media tab supports dense thumbnail grids, adjustable card density, blur toggles, search, extension filtering, metadata filtering, sorting, paging, multi-select, full-size opening, and quick access to containing folders.
-
-This is the main advantage over a normal folder view: you can keep context visible while moving quickly. Select an image, inspect its details, copy it, open the folder, compare it, or delete it without breaking your review flow.
-
-### Inspect Metadata Without Digging Through Files
-
-The details panel surfaces file information, paths, metadata badges, and parsed generation metadata where available. You can copy useful values directly instead of hunting through PNG chunks, sidecar data, or scattered notes.
-
-For generated images, this makes it much easier to answer practical questions: which prompt created this, which files are missing metadata, which outputs came from similar settings, and which images need repair or cleanup.
-
-### Copy Images And Paths Quickly
-
-Copy the selected full-size image to the clipboard, copy one or many file paths, copy media names, and copy selected tag names. This is handy when moving between the viewer, prompt tools, editors, Discord, issue trackers, or file-management scripts.
-
-The goal is to reduce context switching. When you find the image or tag you need, you should be able to move it into the next tool immediately.
-
-### Clean Up Safely
-
-Normal delete actions move files into `.asset_viewer_trash` inside the asset root, giving you a safer cleanup workflow than immediate permanent deletion. Permanent delete is still available when you explicitly ask for it.
-
-### Find And Remove Duplicates
-
-The Duplicates tab can scan the selected root for exact duplicates and optional near duplicates. It streams progress, supports cancellation, groups results, helps select duplicates while preserving one item, and can export reports for later review.
-
-This turns cleanup into a reviewable process instead of a guessing game. You can scan, inspect grouped results, compare uncertain matches, keep the best copy, and export what was found before taking action.
-
-### Compare Images Side By Side
-
-Select two images and open the compare view to inspect differences with a draggable divider. This is useful for subtle generation variations, upscales, edits, and duplicate candidates.
-
-### Browse Prompt Tags
-
-The Tag Browser helps you search tag names and aliases, favorite tags, keep recent tags nearby, inspect example results, copy tag names, and open external searches. It is designed to stay useful while prompt-building or standardizing labels.
-
-Because tag search lives in the same app as your media, you can move between visual review and prompt vocabulary without bouncing between unrelated tools.
-
-### Check Folder And Metadata Health
-
-The Stats tab summarizes root-level folder information and metadata health. Reports can be refreshed and exported, which makes it easier to spot missing or inconsistent metadata in a collection.
-
-This is useful before cleanup, archival, sharing, or model-prep work. Instead of relying on memory, you can get a quick read on what is in a library and where the rough spots are.
-
-### Work Keyboard-First
-
-The app has shortcuts for tab switching, search focus, media navigation, multi-selection, image copying, duplicate scanning, tag copying, compare controls, exports, and delete actions. Press `?` inside the app to show the shortcut reference.
-
-## Feature Overview
-
-| Area | Highlights |
+| Area | Features |
 | --- | --- |
-| Media browsing | Multi-root browsing, search, sorting, filters, density controls, virtualized large-list handling |
-| Details | Preview, paths, metadata badges, generation metadata, copy actions, folder opening |
-| File management | Upload, safe delete, permanent delete, trash folder cleanup workflow |
-| Duplicate cleanup | Exact/near duplicate scan, progress events, cancellation, grouped selection, compare, export |
-| Tag workflow | Tag search, aliases, categories, favorites, recents, examples, external search links |
-| Reports | Folder stats, metadata health, JSON/CSV exports |
-| Keyboard workflow | Fast tab switching, arrow navigation, copy/export/delete shortcuts, in-app shortcut reference |
-| Local-first design | Runs locally, reads configured folders, uses a vendored Vue build, no hosted service required |
+| Media | Search, filters, sorting, density, saved views, multi-selection, slideshow |
+| Inspector | Image/video preview, file information, generation metadata, copy actions |
+| Cleanup | Safe delete, folder moves, exact/near duplicate scans, comparison |
+| Tags | Search names and aliases, favorites, recent tags, examples |
+| Reports | Folder statistics, metadata coverage, JSON/CSV exports |
 
 ## Install
 
@@ -163,7 +70,7 @@ Example:
 
 Only files inside configured asset roots are available to the app. If no roots are configured, the Media tab will not have a folder to browse.
 
-You can configure multiple roots. The viewer will show them in the root picker so you can switch between libraries without changing code or restarting your workflow.
+You can configure multiple roots. The viewer will show them in the library sidebar so you can switch between libraries without changing code or restarting your workflow.
 
 ### Where Settings Are Stored
 
@@ -218,7 +125,17 @@ http://localhost:5001/
 
 ### Media
 
-The Media tab is the main workspace. Pick a root folder, search or filter the current library, then move through the grid with the mouse or keyboard. The right-side details panel updates as you select images, so you can inspect files without opening them one at a time.
+Choose **Media** in the sidebar, then select a library and folder. Search filenames or paths from the toolbar; **Filters** exposes extension and metadata options. Remove individual filter labels or use **Clear filters** when a search has no matches. Sorting, density, and blur sit in the view-controls row.
+
+Selecting media opens its information in the inspector. Use **Inspector** to hide or show it; its visibility is retained while switching sections. Drag the separator to resize it, or focus the separator and use the arrow keys. File, Generation, and Embedded metadata sections can be collapsed independently.
+
+Selection actions appear in their own row. Ctrl-click selects individual items, Shift-click extends the selection, and **Clear** clears it. Compare requires exactly two previewable images.
+
+Choose **Saved views** in the toolbar to name the current folder, search, filters, and sorting. Views appear under the current library in the sidebar and persist in this browser. Reusing a name replaces that view; × removes it.
+
+Choose **Slideshow** to review currently loaded items, starting from the selected media. Previous/Next and arrow keys move through the batch; Play advances every 3, 5, or 10 seconds. Videos have playback controls. Escape closes review mode and restores focus. Load additional media first to include it in the slideshow.
+
+Failed requests offer **Retry**. Refresh and pagination failures preserve visible media; retries continue from the last successful page.
 
 From here you can:
 
@@ -437,7 +354,8 @@ tests/                       Backend and smoke tests
 Install Python dependencies:
 
 ```powershell
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
+python -m playwright install chromium
 ```
 
 Install frontend tooling:
@@ -452,6 +370,16 @@ Run the backend:
 python backend/server.py
 ```
 
+### Browser verification
+
+Browser tests use a static frontend server, mocked API responses, synthetic media, and isolated browser storage. They do not access your configured asset folders. Install `requirements-dev.txt` and Chromium before running them; missing browser tooling is an error, not a skipped check.
+
+```powershell
+python -m pytest tests/test_desktop_ui.py tests/test_browser_smoke.py -q
+```
+
+Screenshots from the desktop checks are written to `build/ui-redesign/`. To keep browser downloads inside this checkout on Windows, set `$env:PLAYWRIGHT_BROWSERS_PATH = "$PWD/build/browsers"` before installing Chromium. Tests automatically use that directory if present.
+
 ### QA Commands
 
 ```powershell
@@ -460,6 +388,7 @@ python -m mypy
 python -m pytest -q
 npm run lint:frontend
 npm run format:frontend:check
+npm run test:frontend
 ```
 
 Format frontend files:

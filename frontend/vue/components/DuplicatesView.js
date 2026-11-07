@@ -197,7 +197,6 @@ export const DuplicatesView = {
                 <div class="results duplicate-results duplicates-results">
                     <div class="meta-row duplicates-meta-row">
                         <div class="meta-group">
-                            <span class="status-dot" aria-hidden="true"></span>
                             <span>{{ duplicateStatusText }}</span>
                         </div>
                         <div v-if="duplicateTaskId" class="meta-group meta-group--subtle">
@@ -294,10 +293,12 @@ export const DuplicatesView = {
                                     :key="asset.path"
                                     class="duplicate-asset"
                                     :class="{ 'is-selected': selectedPathSetHas(asset.path) }"
+                                    :aria-pressed="selectedPathSetHas(asset.path)"
                                     type="button"
                                     @click="selectDuplicateAsset(asset, $event)"
                                 >
                                     <span class="duplicate-thumb">
+                                        <span v-if="selectedPathSetHas(asset.path)" class="selection-check" aria-label="Selected">✓</span>
                                         <img :src="thumbUrl(asset)" :alt="asset.name" loading="lazy" @error="markDuplicateThumbFailed" />
                                         <span class="duplicate-thumb-fallback">{{ asset.extension || 'file' }}</span>
                                         <span v-if="metadataBadges(asset).length" class="asset-metadata-badges">

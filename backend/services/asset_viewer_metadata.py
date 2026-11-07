@@ -38,6 +38,13 @@ BUBBA_METADATA_DEFAULTS: dict[str, Any] = {
     "positive_prompt": "",
     "negative_prompt": "",
     "loras": [],
+    "lora_strengths": [],
+    "vae_name": "",
+    "clip_name": "",
+    "width": 0,
+    "height": 0,
+    "notes": "",
+    "save_prefix": "",
     "filepath": "",
 }
 
@@ -91,29 +98,41 @@ def _coerce_loras(value: Any) -> list[str]:
     return []
 
 
+def _coerce_lora_strengths(value: Any, count: int) -> list[list[float]]:
+    pairs: list[list[float]] = []
+    for item in value if isinstance(value, list) else []:
+        try:
+            model_strength, clip_strength = (float(x) for x in item)
+        except (TypeError, ValueError):
+            model_strength = clip_strength = 1.0
+        pairs.append([model_strength, clip_strength])
+    return (pairs + [[1.0, 1.0]] * count)[:count]
+
+
 def coerce_bubba_metadata(value: Any) -> dict[str, Any]:
     payload = _parse_json_text(value) if isinstance(value, str) else value
     if not isinstance(payload, dict):
         payload = {}
 
     normalized = dict(BUBBA_METADATA_DEFAULTS)
-    for key in ["model_name", "sampler_name", "scheduler", "positive_prompt", "negative_prompt", "filepath"]:
+    for key in ["model_name", "sampler_name", "scheduler", "positive_prompt", "negative_prompt", "filepath", "save_prefix", "vae_name", "clip_name", "notes"]:
         normalized[key] = _sanitize_text(payload.get(key, ""), max_len=6000 if key.endswith("_prompt") else 800)
 
-    for key in ["steps", "seed", "clip_skip"]:
+    for key in ["steps", "seed", "clip_skip", "width", "height"]:
         normalized[key] = _coerce_non_negative_int(payload.get(key))
 
     for key in ["cfg", "sampler_time_seconds"]:
         normalized[key] = _coerce_non_negative_float(payload.get(key))
     normalized["denoise"] = _coerce_non_negative_float(payload.get("denoise"), max_value=1.0)
     normalized["loras"] = _coerce_loras(payload.get("loras"))
+    normalized["lora_strengths"] = _coerce_lora_strengths(payload.get("lora_strengths"), len(normalized["loras"]))
     return normalized
 
 
 def has_bubba_generation_metadata(metadata: Any) -> bool:
     if not isinstance(metadata, dict):
         return False
-    return any(metadata.get(key) != default for key, default in BUBBA_METADATA_DEFAULTS.items() if key != "filepath")
+    return any(metadata.get(key) != default for key, default in BUBBA_METADATA_DEFAULTS.items() if key not in ("filepath", "save_prefix"))
 
 
 def _extract_generation_from_a1111_parameters(raw: Any) -> dict[str, Any]:

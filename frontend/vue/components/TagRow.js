@@ -34,7 +34,7 @@ export const TagRow = {
             :class="{ active }"
             role="button"
             tabindex="0"
-            :aria-selected="active"
+            :aria-pressed="active"
             @click="$emit('select', tag)"
             @keydown="onKeydown"
         >
@@ -56,7 +56,7 @@ export const TagRow = {
                     </button>
                 </div>
             </div>
-            <div class="tag-alias">{{ tag.aliases || 'No aliases' }}</div>
+            <div v-if="tag.aliases" class="tag-alias">{{ tag.aliases }}</div>
         </div>
     `
 };

@@ -46,12 +46,13 @@ def _normalize_scan_request(
     min_size_bytes: int | None,
     max_size_bytes: int | None,
     modified_after_ts: float | None,
+    folder: str = "",
 ) -> dict[str, Any]:
     requested_exts = [ext.lower() for ext in (extensions or []) if ext.strip()]
     requested_exts = [ext if ext.startswith('.') else f'.{ext}' for ext in requested_exts]
 
     requested_sort_by = str(sort_by or 'name').strip().lower()
-    if requested_sort_by not in {'name', 'modified', 'size', 'metadata'}:
+    if requested_sort_by not in {'name', 'extension', 'modified', 'size', 'metadata'}:
         requested_sort_by = 'name'
 
     requested_sort_dir = str(sort_dir or 'asc').strip().lower()
@@ -74,6 +75,10 @@ def _normalize_scan_request(
         max_size = None
 
     modified_after = float(modified_after_ts) if isinstance(modified_after_ts, (int, float)) else None
+    requested_folder = str(folder or "").strip().replace("\\", os.sep).replace("/", os.sep)
+    requested_folder = "" if requested_folder in {"", "."} else os.path.normpath(requested_folder)
+    if requested_folder.startswith("..") or os.path.isabs(requested_folder):
+        requested_folder = ""
 
     return {
         'normalized_root': os.path.abspath(root),
@@ -87,6 +92,7 @@ def _normalize_scan_request(
         'min_size': min_size,
         'max_size': max_size,
         'modified_after': modified_after,
+        'requested_folder': requested_folder,
     }
 
 
@@ -135,6 +141,8 @@ def _metadata_mode_matches(
 def _scan_sort_key(requested_sort_by: str, item: dict[str, Any]) -> tuple[Any, ...]:
     name_key = str(item.get('name') or '').lower()
     path_key = str(item.get('relative_path') or '').lower()
+    if requested_sort_by == 'extension':
+        return (str(item.get('extension') or '').lower(), name_key, path_key)
     if requested_sort_by == 'modified':
         return (float(item.get('modified_ts') or 0.0), name_key, path_key)
     if requested_sort_by == 'size':
@@ -160,6 +168,7 @@ def scan_assets(
     modified_after_ts: float | None = None,
     metadata_mode: str = "all",
     metadata_badge_filter: list[str] | None = None,
+    folder: str = "",
 ) -> list[dict[str, Any]]:
     request_state = _normalize_scan_request(
         root,
@@ -174,6 +183,7 @@ def scan_assets(
         min_size_bytes,
         max_size_bytes,
         modified_after_ts,
+        folder,
     )
     normalized_root = request_state['normalized_root']
 
@@ -191,6 +201,7 @@ def scan_assets(
     max_size = request_state['max_size']
     modified_after = request_state['modified_after']
     requested_exts = request_state['requested_exts']
+    requested_folder = request_state['requested_folder']
 
     stream_fast_path = requested_sort_by == "name" and requested_sort_dir == "asc"
 
@@ -211,6 +222,10 @@ def scan_assets(
                 continue
 
             rel_path = os.path.relpath(abs_path, normalized_root)
+            if requested_folder:
+                rel_parent = os.path.dirname(rel_path)
+                if rel_parent != requested_folder and not rel_parent.startswith(requested_folder + os.sep):
+                    continue
             metadata_summary: dict[str, Any] = {}
             supports_metadata = extension in {".safetensors", ".png"}
             base_search_blob = f"{filename} {rel_path}".lower()

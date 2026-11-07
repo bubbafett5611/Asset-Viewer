@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Frontend formatting and linting tools for Asset Viewer",
   "scripts": {
+    "test:frontend": "node --test tests/test_asset_requests.mjs tests/test_review_features.mjs",
     "lint:frontend": "eslint \"frontend/**/*.js\"",
     "format:frontend": "prettier --write \"frontend/**/*.{js,css,html}\"",
     "format:frontend:check": "prettier --check \"frontend/**/*.{js,css,html}\""

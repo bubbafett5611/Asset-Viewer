@@ -7,6 +7,18 @@ import { SettingsView } from '/vue/components/SettingsView.js';
 import { useAssetViewerState } from '/vue/useAssetViewer.js';
 
 createApp({
+  directives: {
+    modal: {
+      mounted(element) {
+        element._returnFocus = document.activeElement;
+        element.showModal();
+      },
+      beforeUnmount(element) {
+        element.close();
+        element._returnFocus?.focus();
+      }
+    }
+  },
   components: {
     AssetsView,
     TagsView,
@@ -26,9 +38,9 @@ createApp({
                 </div>
             </div>
 
-            <div v-if="isDeleteConfirmVisible" class="delete-confirm-modal">
+            <dialog v-modal v-if="isDeleteConfirmVisible" aria-label="Confirm deletion" @keydown.stop @cancel.prevent="hideDeleteConfirm" class="delete-confirm-modal">
                 <div class="delete-confirm-card">
-                    <div class="delete-confirm-title">Delete <span class="delete-count">{{ deleteCount }}</span> media item(s)?</div>
+                    <div class="delete-confirm-title">Delete <span class="delete-count">{{ deleteCount }}</span> {{ deleteCount === 1 ? 'item' : 'items' }}?</div>
                     <div class="delete-confirm-message">
                         {{ safeDelete ? 'Files will be moved to .asset_viewer_trash.' : 'This action cannot be undone.' }}
                     </div>
@@ -43,9 +55,9 @@ createApp({
                         </button>
                     </div>
                 </div>
-            </div>
+            </dialog>
 
-            <div v-if="compareLeft && compareRight" class="compare-modal">
+            <dialog v-modal v-if="compareLeft && compareRight" aria-label="Compare images" @keydown.stop @cancel.prevent="closeCompare" class="compare-modal">
                 <div class="compare-card">
                     <div class="compare-header">
                         <div>
@@ -74,10 +86,10 @@ createApp({
                         ></button>
                     </div>
                 </div>
-            </div>
+            </dialog>
 
-            <div v-if="isShortcutsModalVisible" class="shortcuts-modal" @click.self="hideShortcutsModal">
-                <div class="shortcuts-card" role="dialog" aria-modal="true" aria-labelledby="shortcutsTitle">
+            <dialog v-modal v-if="isShortcutsModalVisible" aria-labelledby="shortcutsTitle" @keydown.stop @cancel.prevent="hideShortcutsModal" class="shortcuts-modal" @click.self="hideShortcutsModal">
+                <div class="shortcuts-card">
                     <div class="shortcuts-header">
                         <div>
                             <h2 id="shortcutsTitle">Keyboard Shortcuts</h2>
@@ -151,24 +163,21 @@ createApp({
                         </div>
                     </div>
                 </div>
-            </div>
+            </dialog>
 
-            <header class="header">
-                <div class="header-copy">
-                    <h1 class="title">Bubba Media Viewer</h1>
+            <aside class="library-sidebar" aria-label="Library navigation">
+                <h1 class="title">Bubba<br />Media Viewer</h1>
+                <nav class="tab-nav" aria-label="Viewer sections">
+                    <button v-for="section in [{key: 'assets', label: 'Media'}, {key: 'tags', label: 'Tag Browser'}, {key: 'duplicates', label: 'Duplicates'}, {key: 'stats', label: 'Stats'}]" :key="section.key" class="tab-button" :class="{ 'is-active': activeTab === section.key }" :aria-pressed="activeTab === section.key" type="button" @click="activeTab = section.key">{{ section.label }}</button>
+                </nav>
+                <div id="library-content" class="library-content"></div>
+                <div class="library-footer">
+                    <button class="tab-button" :class="{ 'is-active': activeTab === 'settings' }" :aria-pressed="activeTab === 'settings'" type="button" @click="activeTab = 'settings'">Settings</button>
+                    <button class="tab-button" type="button" @click="showShortcutsModal">Keyboard shortcuts <kbd>?</kbd></button>
                 </div>
-                <div class="header-actions">
-                    <nav class="tab-nav" aria-label="Viewer sections">
-                        <button class="tab-button" :class="{ 'is-active': activeTab === 'assets' }" type="button" :aria-pressed="activeTab === 'assets'" @click="activeTab = 'assets'">Media</button>
-                        <button class="tab-button" :class="{ 'is-active': activeTab === 'tags' }" type="button" :aria-pressed="activeTab === 'tags'" @click="activeTab = 'tags'">Tag Browser</button>
-                        <button class="tab-button" :class="{ 'is-active': activeTab === 'duplicates' }" type="button" :aria-pressed="activeTab === 'duplicates'" @click="activeTab = 'duplicates'">Duplicates</button>
-                        <button class="tab-button" :class="{ 'is-active': activeTab === 'stats' }" type="button" :aria-pressed="activeTab === 'stats'" @click="activeTab = 'stats'">Stats</button>
-                        <button class="tab-button" :class="{ 'is-active': activeTab === 'settings' }" type="button" :aria-pressed="activeTab === 'settings'" @click="activeTab = 'settings'">Settings</button>
-                    </nav>
-                    <button class="shortcut-help-button" type="button" aria-label="Show keyboard shortcuts" title="Keyboard shortcuts (?)" @click="showShortcutsModal">?</button>
-                </div>
-            </header>
-
+            </aside>
+            <main class="app-workspace" aria-label="Workspace">
+                <div v-if="activeTab === 'tags'" class="inspector-toggle-row"><button class="button button--compact" type="button" :aria-pressed="inspectorVisible" @click="toggleInspector">Inspector</button></div>
             <div v-if="updateNotice" class="update-banner" role="status" aria-live="polite">
                 <div class="update-banner-copy">
                     <strong>Update available:</strong>
@@ -189,6 +198,7 @@ createApp({
 
             <TagsView
                 v-else-if="activeTab === 'tags'"
+                :class="{ 'inspector-hidden': !inspectorVisible }"
                 v-bind="tagsViewProps"
             />
 
@@ -206,6 +216,7 @@ createApp({
                 v-else-if="activeTab === 'settings'"
                 v-bind="settingsViewProps"
             />
+            </main>
         </div>
     `
 }).mount('#app');

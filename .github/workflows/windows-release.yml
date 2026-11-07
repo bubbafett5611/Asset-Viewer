@@ -26,6 +26,7 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-build.txt
+            requirements-dev.txt
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -34,7 +35,10 @@ jobs:
           cache: "npm"
 
       - name: Install Python dependencies
-        run: python -m pip install -r requirements.txt -r requirements-build.txt
+        run: python -m pip install -r requirements-dev.txt -r requirements-build.txt
+
+      - name: Install browser test runtime
+        run: python -m playwright install chromium
 
       - name: Install frontend dependencies
         run: npm ci
@@ -56,6 +60,7 @@ jobs:
         run: |
           npm run lint:frontend
           npm run format:frontend:check
+          npm run test:frontend
 
       - name: Build portable Windows app
         run: python -m PyInstaller --noconfirm packaging/bubba_media_viewer.spec

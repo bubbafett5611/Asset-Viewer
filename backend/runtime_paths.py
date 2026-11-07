@@ -71,6 +71,18 @@ def report_cache_file(root: str, filename: str) -> Path:
     return report_cache_dir(root) / filename
 
 
+def asset_index_cache_dir(root: str) -> Path:
+    normalized_root = str(Path(root).expanduser().resolve()).casefold()
+    root_key = sha256(normalized_root.encode("utf-8")).hexdigest()[:16]
+    return cache_dir() / "asset-indexes" / root_key
+
+
+def asset_index_cache_file(root: str) -> Path:
+    if uses_user_data_for_cache():
+        return asset_index_cache_dir(root) / "assets.sqlite"
+    return Path(root).expanduser().resolve() / ".asset_viewer_reports" / "asset_index.sqlite"
+
+
 def bundled_settings_file() -> Path:
     root = resource_root()
     candidates = [

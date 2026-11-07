@@ -106,7 +106,16 @@ def _ensure_not_cancelled(cancel_check: Callable[[], bool] | None) -> None:
         raise DuplicateScanCancelled('Duplicate scan cancelled')
 
 
-def _hash_duplicate_assets(assets: list[dict[str, Any]], near_duplicate_extensions: set[str], image_module, include_near: bool, progress_callback, cancel_check):
+def _hash_duplicate_assets(
+    assets: list[dict[str, Any]],
+    near_duplicate_extensions: set[str],
+    image_module,
+    include_near: bool,
+    progress_callback,
+    cancel_check,
+    get_cached_hashes_fn=None,
+    update_cached_hashes_fn=None,
+):
     content_hashes: dict[str, list[str]] = {}
     pixel_hashes: dict[str, list[str]] = {}
     content_hash_by_path: dict[str, str] = {}
@@ -120,20 +129,35 @@ def _hash_duplicate_assets(assets: list[dict[str, Any]], near_duplicate_extensio
         if not path:
             continue
 
-        content_hash = _sha256_file(path)
+        cached_hashes = get_cached_hashes_fn(path) if get_cached_hashes_fn is not None else None
+        cached_hashes = cached_hashes if isinstance(cached_hashes, dict) else {}
+        computed_hashes: dict[str, Any] = {}
+
+        content_hash = cached_hashes.get('content_hash') or _sha256_file(path)
         if content_hash:
             content_hash_by_path[path] = content_hash
             content_hashes.setdefault(content_hash, []).append(path)
+            if content_hash != cached_hashes.get('content_hash'):
+                computed_hashes['content_hash'] = content_hash
 
         if extension in near_duplicate_extensions:
-            pixel_hash = _pixel_hash(path, image_module=image_module)
+            pixel_hash = cached_hashes.get('pixel_hash') or _pixel_hash(path, image_module=image_module)
             if pixel_hash:
                 pixel_hash_by_path[path] = pixel_hash
                 pixel_hashes.setdefault(pixel_hash, []).append(path)
+                if pixel_hash != cached_hashes.get('pixel_hash'):
+                    computed_hashes['pixel_hash'] = pixel_hash
             if include_near:
-                dhash_value = _dhash(path, image_module=image_module)
+                dhash_value = cached_hashes.get('dhash')
+                if dhash_value is None:
+                    dhash_value = _dhash(path, image_module=image_module)
                 if dhash_value is not None:
-                    dhash_by_path[path] = dhash_value
+                    dhash_by_path[path] = int(dhash_value)
+                    if dhash_value != cached_hashes.get('dhash'):
+                        computed_hashes['dhash'] = int(dhash_value)
+
+        if computed_hashes and update_cached_hashes_fn is not None:
+            update_cached_hashes_fn(path, computed_hashes)
 
         if index == len(assets) or index == 1 or index % 10 == 0:
             percent = 5 + round((index / max(len(assets), 1)) * 65)
@@ -246,6 +270,8 @@ def scan_duplicate_assets(
     limit: int = 5000,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
+    get_cached_hashes_fn=None,
+    update_cached_hashes_fn=None,
 ) -> dict[str, Any]:
     import os
 
@@ -272,6 +298,8 @@ def scan_duplicate_assets(
         include_near,
         progress_callback,
         cancel_check,
+        get_cached_hashes_fn,
+        update_cached_hashes_fn,
     )
 
     groups: list[dict[str, Any]] = []

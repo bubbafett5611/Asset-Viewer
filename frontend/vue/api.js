@@ -4,6 +4,8 @@ export const API = {
   appInfo: '/api/app/info',
   updateLatest: '/api/update/latest',
   list: '/api/assets/list',
+  folders: '/api/assets/folders',
+  move: '/api/assets/move',
   duplicates: '/api/assets/duplicates',
   duplicatesStream: '/api/assets/duplicates/stream',
   duplicatesTaskStatus: '/api/assets/duplicates/tasks',

@@ -3,7 +3,9 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from '/vendor/
 export function useViewerLayout(options) {
   const { assets, filters, getDensityConfig } = options;
 
-  const detailsWidth = ref(420);
+  const detailsWidth = ref(340);
+  const inspectorVisible = ref(true);
+  const viewportWidth = ref(Math.max(1024, window.innerWidth));
   const previewHeight = ref(320);
   const assetListRef = ref(null);
   const searchInputRef = ref(null);
@@ -15,15 +17,17 @@ export function useViewerLayout(options) {
   const densityClass = computed(() => `density-${filters.density}`);
   const densityConfig = computed(() => getDensityConfig(filters.density));
   const layoutStyle = computed(() => ({
-    '--details-width': `${detailsWidth.value}px`,
+    '--details-width': `${Math.max(280, Math.min(detailsWidth.value, viewportWidth.value - 220 - 24 - 16 - 420))}px`,
     '--preview-height': `${previewHeight.value}px`
   }));
   const assetListStyle = computed(() => ({
-    '--asset-min-col-width': `${densityConfig.value.minWidth}px`
+    '--asset-min-col-width': `${densityConfig.value.minWidth}px`,
+    '--asset-row-height': `${densityConfig.value.rowHeight}px`,
+    '--asset-gap': filters.density === 'large' ? '14px' : '10px'
   }));
   const shouldVirtualize = computed(() => assets.value.length > 240);
   const virtualColumnCount = computed(() => {
-    const width = Math.max(1, assetListWidth.value || assetListRef.value?.clientWidth || 1);
+    const width = Math.max(1, (assetListWidth.value || assetListRef.value?.clientWidth || 1) - 12);
     const gap = filters.density === 'large' ? 14 : 10;
     return Math.max(1, Math.floor((width + gap) / (densityConfig.value.minWidth + gap)));
   });
@@ -48,6 +52,7 @@ export function useViewerLayout(options) {
   }));
 
   function measureAssetList() {
+    viewportWidth.value = Math.max(1024, window.innerWidth);
     const element = assetListRef.value;
     if (!element) {
       return;
@@ -76,6 +81,14 @@ export function useViewerLayout(options) {
   }
 
   function startDetailsResize(event) {
+    const clampWidth = (value) => Math.max(280, Math.min(viewportWidth.value - 220 - 24 - 16 - 420, value));
+    if (event.key) {
+      if (['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+        event.preventDefault();
+        detailsWidth.value = clampWidth(detailsWidth.value + (event.key === 'ArrowLeft' ? 16 : -16));
+      }
+      return;
+    }
     if (event.button !== 0) {
       return;
     }
@@ -85,7 +98,7 @@ export function useViewerLayout(options) {
 
     function onMove(moveEvent) {
       const delta = startX - moveEvent.clientX;
-      detailsWidth.value = Math.max(320, Math.min(900, startWidth + delta));
+      detailsWidth.value = clampWidth(startWidth + delta);
     }
 
     function onUp() {
@@ -100,6 +113,15 @@ export function useViewerLayout(options) {
   }
 
   function startPreviewResize(event) {
+    const panelHeight = event.currentTarget?.closest('.asset-details-panel')?.clientHeight || window.innerHeight;
+    const clampHeight = (value) => Math.max(140, Math.min(720, panelHeight - 360, value));
+    if (event.key) {
+      if (['ArrowUp', 'ArrowDown'].includes(event.key)) {
+        event.preventDefault();
+        previewHeight.value = clampHeight(previewHeight.value + (event.key === 'ArrowDown' ? 16 : -16));
+      }
+      return;
+    }
     if (event.button !== 0) {
       return;
     }
@@ -110,7 +132,7 @@ export function useViewerLayout(options) {
 
     function onMove(moveEvent) {
       const delta = moveEvent.clientY - startY;
-      previewHeight.value = Math.max(140, Math.min(720, startHeight + delta));
+      previewHeight.value = clampHeight(startHeight + delta);
     }
 
     function onUp() {
@@ -146,6 +168,11 @@ export function useViewerLayout(options) {
   });
 
   return {
+    inspectorVisible,
+    toggleInspector: () => {
+      inspectorVisible.value = !inspectorVisible.value;
+      nextTick(measureAssetList);
+    },
     detailsWidth,
     previewHeight,
     assetListRef,

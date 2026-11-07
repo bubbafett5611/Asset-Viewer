@@ -1,4 +1,4 @@
-import { computed, nextTick, reactive, ref } from '/vendor/vue.esm-browser.prod.js';
+import { computed, nextTick, reactive, ref, watch } from '/vendor/vue.esm-browser.prod.js';
 import { API, buildQuery, fileUrl, thumbUrl } from '/vue/api.js';
 import { useSelection } from '/vue/composables/useSelection.js';
 import { useTags } from '/vue/composables/useTags.js';
@@ -17,7 +17,7 @@ const SETTINGS_KEY = 'bubba_asset_viewer_settings';
 const UPDATE_NOTICE_KEY = 'bubba_asset_viewer_update_notice';
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const UPDATE_SNOOZE_INTERVAL_MS = 24 * 60 * 60 * 1000;
-const ALLOWED_UPLOAD_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tif', '.tiff']);
+const ALLOWED_UPLOAD_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tif', '.tiff', '.mp4']);
 const PREVIEWABLE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tif', '.tiff']);
 const METADATA_FILTERS = [
   { key: 'bubba_metadata', label: 'Bubba' },
@@ -135,7 +135,7 @@ function isAllowedImageFile(file) {
     return false;
   }
   const type = String(file.type || '').toLowerCase();
-  if (type.startsWith('image/')) {
+  if (type.startsWith('image/') || type === 'video/mp4') {
     return true;
   }
   return ALLOWED_UPLOAD_EXTENSIONS.has(fileExtension(file.name));
@@ -170,6 +170,22 @@ function formatBytes(bytes) {
   return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
+function normalizeFolderPath(path) {
+  return String(path || '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+|\/+$/g, '');
+}
+
+function parentFolderPath(path) {
+  const normalized = normalizeFolderPath(path);
+  if (!normalized) {
+    return '';
+  }
+  const parts = normalized.split('/');
+  parts.pop();
+  return parts.join('/');
+}
+
 export function useAssetViewerState() {
   const savedSettings = loadObjectFromStorage(SETTINGS_KEY);
   const activeTab = ref(
@@ -178,6 +194,9 @@ export function useAssetViewerState() {
       : 'assets'
   );
   const roots = ref([]);
+  const folderTree = ref([]);
+  const expandedFolderPaths = ref(new Set());
+  const isFolderTreeCollapsed = ref(Boolean(savedSettings.folderTreeCollapsed));
   const assets = ref([]);
   const selectedAsset = ref(null);
   const selectedPath = ref('');
@@ -186,6 +205,10 @@ export function useAssetViewerState() {
   const lastSelectedDuplicateIndex = ref(-1);
   const details = ref(null);
   const statusText = ref('Loading roots...');
+  const rootsLoading = ref(true);
+  const rootsError = ref('');
+  const assetError = ref('');
+  const paginationError = ref(false);
   const isLoading = ref(false);
   const isLoadingMore = ref(false);
   const isUploading = ref(false);
@@ -272,10 +295,13 @@ export function useAssetViewerState() {
 
   const filters = reactive({
     root: String(savedSettings.root || ''),
+    folder: String(savedSettings.folder || ''),
     q: '',
     ext: '',
     metadataBadge: '',
-    sortBy: ['name', 'modified', 'size', 'metadata'].includes(savedSettings.sortBy) ? savedSettings.sortBy : 'modified',
+    sortBy: ['name', 'extension', 'modified', 'size', 'metadata'].includes(savedSettings.sortBy)
+      ? savedSettings.sortBy
+      : 'modified',
     sortDir: ['asc', 'desc'].includes(savedSettings.sortDir) ? savedSettings.sortDir : 'desc',
     density: 'comfortable'
   });
@@ -287,6 +313,8 @@ export function useAssetViewerState() {
   });
 
   const {
+    inspectorVisible,
+    toggleInspector,
     detailsWidth,
     previewHeight,
     assetListRef,
@@ -318,6 +346,45 @@ export function useAssetViewerState() {
   const currentRootLabel = computed(() => {
     const root = roots.value.find((item) => item.key === filters.root);
     return root?.label || root?.key || filters.root || 'selected folder';
+  });
+  const visibleFolderTree = computed(() => {
+    const normalizedToFolder = new Map();
+    const childCounts = new Map();
+    for (const folder of folderTree.value) {
+      const normalized = normalizeFolderPath(folder.path);
+      normalizedToFolder.set(normalized, folder);
+      const parent = parentFolderPath(normalized);
+      childCounts.set(parent, (childCounts.get(parent) || 0) + 1);
+    }
+
+    return folderTree.value
+      .filter((folder) => {
+        const normalized = normalizeFolderPath(folder.path);
+        if (!normalized) {
+          return true;
+        }
+        const depth = normalized.split('/').length;
+        if (depth === 1) {
+          return true;
+        }
+        let parent = parentFolderPath(normalized);
+        while (parent) {
+          const parentFolder = normalizedToFolder.get(parent);
+          if (!parentFolder || !expandedFolderPaths.value.has(parentFolder.path)) {
+            return false;
+          }
+          parent = parentFolderPath(parent);
+        }
+        return true;
+      })
+      .map((folder) => {
+        const normalized = normalizeFolderPath(folder.path);
+        return {
+          ...folder,
+          hasChildren: (childCounts.get(normalized) || 0) > 0,
+          isExpanded: !normalized || expandedFolderPaths.value.has(folder.path)
+        };
+      });
   });
   const duplicateAssets = computed(() => {
     return duplicateGroups.value.flatMap((group) => (Array.isArray(group.assets) ? group.assets : []));
@@ -449,17 +516,196 @@ export function useAssetViewerState() {
   }
 
   async function fetchRoots() {
-    const response = await fetch(API.roots);
-    if (!response.ok) {
-      throw new Error(`Failed to load roots (${response.status})`);
+    rootsLoading.value = true;
+    rootsError.value = '';
+    try {
+      const response = await fetch(API.roots);
+      if (!response.ok) throw new Error(`Could not load libraries (${response.status}).`);
+      const payload = await response.json();
+      roots.value = Array.isArray(payload.roots) ? payload.roots : [];
+      if (!roots.value.some((root) => root.key === filters.root)) filters.root = roots.value[0]?.key || '';
+      return true;
+    } catch (error) {
+      rootsError.value = error.message || 'Could not load libraries.';
+      return false;
+    } finally {
+      rootsLoading.value = false;
     }
-    const payload = await response.json();
-    roots.value = Array.isArray(payload.roots) ? payload.roots : [];
-    if (filters.root && !roots.value.some((root) => root.key === filters.root)) {
-      filters.root = '';
+  }
+
+  async function retryRoots() {
+    await fetchRoots();
+    if (!rootsError.value) {
+      await fetchFolders();
+      await refreshAssets();
     }
-    if (!filters.root && roots.value.length > 0) {
-      filters.root = roots.value[0].key;
+  }
+
+  function clearMediaFilters() {
+    filters.q = '';
+    filters.ext = '';
+    filters.metadataBadge = '';
+  }
+
+  function retryAssets() {
+    return paginationError.value ? loadMore() : refreshAssets({ keepSelection: true });
+  }
+
+  watch(
+    () => filters.root,
+    () => {
+      assets.value = [];
+      folderTree.value = [];
+      selectedAsset.value = null;
+      selectedPath.value = '';
+      selectedPaths.value = new Set();
+      lastSelectedIndex.value = -1;
+      details.value = null;
+      duplicateGroups.value = [];
+      compareLeft.value = null;
+      compareRight.value = null;
+      isDeleteConfirmVisible.value = false;
+      assetError.value = '';
+      hasMore.value = false;
+    },
+    { flush: 'sync' }
+  );
+
+  async function fetchFolders({ refreshIndex = false } = {}) {
+    const requestedRoot = filters.root;
+    if (!filters.root) {
+      folderTree.value = [];
+      return;
+    }
+    try {
+      const response = await fetch(
+        buildQuery(API.folders, {
+          root: filters.root,
+          refresh_index: refreshIndex ? 'true' : ''
+        })
+      );
+      if (!response.ok) {
+        throw new Error(`Failed to load folders (${response.status})`);
+      }
+      const payload = await response.json();
+      if (filters.root !== requestedRoot) return;
+      folderTree.value = Array.isArray(payload.folders) ? payload.folders : [];
+      expandedFolderPaths.value = new Set();
+      if (filters.folder && !folderTree.value.some((folder) => folder.path === filters.folder)) {
+        filters.folder = '';
+      }
+    } catch (error) {
+      console.error(error);
+      if (filters.root === requestedRoot) folderTree.value = [{ path: '', label: 'root', depth: 0 }];
+    }
+  }
+
+  function selectRoot(rootKey) {
+    if (!rootKey || filters.root === rootKey) {
+      return;
+    }
+    filters.root = rootKey;
+    filters.folder = '';
+  }
+
+  function selectFolder(folderPath) {
+    filters.folder = String(folderPath || '');
+  }
+
+  function toggleFolderExpanded(folderPath) {
+    const folder = folderTree.value.find((item) => item.path === folderPath);
+    if (!folder) {
+      return;
+    }
+    const normalized = normalizeFolderPath(folder.path);
+    if (!normalized) {
+      return;
+    }
+    const hasChildren = folderTree.value.some((item) => parentFolderPath(item.path) === normalized);
+    if (!hasChildren) {
+      return;
+    }
+    const nextExpanded = new Set(expandedFolderPaths.value);
+    if (nextExpanded.has(folder.path)) {
+      nextExpanded.delete(folder.path);
+    } else {
+      nextExpanded.add(folder.path);
+    }
+    expandedFolderPaths.value = nextExpanded;
+  }
+
+  function toggleFolderTree() {
+    isFolderTreeCollapsed.value = !isFolderTreeCollapsed.value;
+    saveObjectToStorage(SETTINGS_KEY, {
+      ...loadObjectFromStorage(SETTINGS_KEY),
+      folderTreeCollapsed: isFolderTreeCollapsed.value
+    });
+  }
+
+  async function createFolder() {
+    const parent = filters.folder || '';
+    const name = window.prompt(`New folder${parent ? ` inside ${parent}` : ''}:`, '');
+    if (name === null || !name.trim()) {
+      return;
+    }
+    statusText.value = `Creating folder "${name.trim()}"...`;
+    try {
+      const response = await fetch(API.folders, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: filters.root, parent, name: name.trim() })
+      });
+      if (!response.ok) {
+        throw new Error(await responseErrorMessage(response, `Folder creation failed (${response.status})`));
+      }
+      const payload = await response.json();
+      await fetchFolders();
+      filters.folder = payload.folder?.path || parent;
+      statusText.value = `Created folder "${payload.folder?.path || name.trim()}".`;
+    } catch (error) {
+      console.error(error);
+      statusText.value = error?.message || 'Folder creation failed.';
+    }
+  }
+
+  async function moveSelectedAssets(folder = '') {
+    const paths = Array.from(
+      selectedPaths.value.size ? selectedPaths.value : new Set(selectedPath.value ? [selectedPath.value] : [])
+    );
+    if (!paths.length || isDeleting.value) {
+      return;
+    }
+    isDeleting.value = true;
+    statusText.value = `Moving ${paths.length} media files...`;
+    try {
+      const response = await fetch(API.move, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: filters.root, folder, paths })
+      });
+      if (!response.ok) {
+        throw new Error(await responseErrorMessage(response, `Move failed (${response.status})`));
+      }
+      const payload = await response.json();
+      const moved = Array.isArray(payload.moved) ? payload.moved : [];
+      const movedPaths = new Set(moved.map((item) => item.path));
+      replaceSelectedPaths(Array.from(selectedPaths.value).filter((path) => !movedPaths.has(path)));
+      if (movedPaths.has(selectedPath.value)) {
+        selectedPath.value = '';
+        selectedAsset.value = null;
+        details.value = null;
+      }
+      await refreshAssets({ keepSelection: true });
+      await fetchFolders();
+      const errors = Array.isArray(payload.errors) ? payload.errors.length : 0;
+      statusText.value = errors
+        ? `Moved ${moved.length} media files; ${errors} failed.`
+        : `Moved ${moved.length} media files to ${folder || 'root'}.`;
+    } catch (error) {
+      console.error(error);
+      statusText.value = error?.message || 'Move failed.';
+    } finally {
+      isDeleting.value = false;
     }
   }
 
@@ -491,10 +737,10 @@ export function useAssetViewerState() {
         throw new Error(`Failed to load details (${response.status})`);
       }
       const payload = await response.json();
-      details.value = payload.asset || null;
+      if (selectedPath.value === asset.path) details.value = payload.asset || null;
     } catch (error) {
       console.error(error);
-      details.value = null;
+      if (selectedPath.value === asset.path) details.value = null;
     }
   }
 
@@ -607,6 +853,8 @@ export function useAssetViewerState() {
     onWindowDragLeave,
     onWindowDrop
   } = useAssets({
+    assetError,
+    paginationError,
     API,
     buildQuery,
     nextTick,
@@ -642,6 +890,22 @@ export function useAssetViewerState() {
       await selectAsset(asset);
     }
   });
+
+  function onAssetListScrollWithAutoLoad() {
+    onAssetListScroll();
+    if (activeTab.value !== 'assets' || assetError.value || !hasMore.value || isLoading.value || isLoadingMore.value) {
+      return;
+    }
+    const element = assetListRef.value;
+    if (!element) {
+      return;
+    }
+    const remainingScroll = element.scrollHeight - element.scrollTop - element.clientHeight;
+    const preloadDistance = Math.max(480, element.clientHeight * 0.75);
+    if (remainingScroll <= preloadDistance) {
+      loadMore();
+    }
+  }
 
   function openSelectedAssetFull() {
     if (!selectedPath.value) {
@@ -1047,9 +1311,9 @@ export function useAssetViewerState() {
   async function copySelectedPaths() {
     const assetsToCopy = selectedExportAssets();
     await copyText(assetsToCopy.map((asset) => asset.path).join('\n'));
-    statusText.value = `Copied ${assetsToCopy.length} path(s).`;
+    statusText.value = `Copied ${assetsToCopy.length} ${assetsToCopy.length === 1 ? 'path' : 'paths'}.`;
     if (activeTab.value === 'duplicates') {
-      duplicateStatusText.value = `Copied ${assetsToCopy.length} path(s).`;
+      duplicateStatusText.value = statusText.value;
     }
   }
 
@@ -1135,9 +1399,23 @@ export function useAssetViewerState() {
   }
 
   const { assetsViewProps, tagsViewProps, duplicatesViewProps, statsViewProps, settingsViewProps } = useViewerProps({
+    inspectorVisible,
+    toggleInspector,
+    rootsLoading,
+    rootsError,
+    assetError,
+    retryRoots,
+    retryAssets,
+    clearMediaFilters,
+    openSettings: () => {
+      activeTab.value = 'settings';
+    },
+    toggleBlurThumbnails,
     layoutStyle,
     filters,
     roots,
+    folderTree: visibleFolderTree,
+    isFolderTreeCollapsed,
     metadataFilterList,
     assets,
     selectedAsset,
@@ -1161,8 +1439,14 @@ export function useAssetViewerState() {
     virtualWindowStyle,
     setAssetListRef,
     setSearchInputRef,
-    onAssetListScroll,
+    onAssetListScroll: onAssetListScrollWithAutoLoad,
     refreshAssets,
+    selectRoot,
+    selectFolder,
+    toggleFolderExpanded,
+    toggleFolderTree,
+    createFolder,
+    moveSelectedAssets,
     loadMore,
     selectAsset,
     clearSelection,
@@ -1269,6 +1553,7 @@ export function useAssetViewerState() {
     fetchAppInfo,
     isAutoUpdateCheckEnabled,
     fetchRoots,
+    fetchFolders,
     statusText,
     onWindowDragEnter,
     onWindowDragOver,
@@ -1281,6 +1566,8 @@ export function useAssetViewerState() {
   });
 
   return {
+    inspectorVisible,
+    toggleInspector,
     activeTab,
     deleteCount,
     isUploading,

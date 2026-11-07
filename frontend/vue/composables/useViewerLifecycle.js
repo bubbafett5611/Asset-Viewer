@@ -23,6 +23,7 @@ export function useViewerLifecycle(options) {
     fetchAppInfo,
     isAutoUpdateCheckEnabled,
     fetchRoots,
+    fetchFolders,
     statusText,
     onWindowDragEnter,
     onWindowDragOver,
@@ -51,6 +52,7 @@ export function useViewerLifecycle(options) {
     () => ({
       activeTab: activeTab.value,
       root: filters.root,
+      folder: filters.folder,
       sortBy: filters.sortBy,
       sortDir: filters.sortDir,
       duplicateIncludeNear: duplicateIncludeNear.value,
@@ -67,10 +69,17 @@ export function useViewerLifecycle(options) {
   );
 
   watch(
-    () => [filters.root, filters.ext, filters.metadataBadge, filters.sortBy, filters.sortDir],
+    () => [filters.root, filters.folder, filters.ext, filters.metadataBadge, filters.sortBy, filters.sortDir],
     async () => {
-      offset.value = 0;
       await fetchAssets({ append: false });
+    }
+  );
+
+  watch(
+    () => filters.root,
+    async () => {
+      filters.folder = '';
+      await fetchFolders?.();
     }
   );
 
@@ -81,7 +90,6 @@ export function useViewerLifecycle(options) {
         clearTimeout(searchTimer);
       }
       searchTimer = setTimeout(async () => {
-        offset.value = 0;
         await fetchAssets({ append: false });
       }, 220);
     }
@@ -127,7 +135,8 @@ export function useViewerLifecycle(options) {
     try {
       await fetchSettings();
       await fetchAppInfo?.();
-      await fetchRoots();
+      if (!(await fetchRoots())) return;
+      await fetchFolders?.();
       await fetchAssets({ append: false });
       if (activeTab.value === 'stats') {
         await fetchFolderStats();

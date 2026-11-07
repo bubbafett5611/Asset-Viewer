@@ -1,0 +1,127 @@
+.saved-views {
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.saved-views summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.saved-views-content {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+}
+.saved-views-content p {
+  margin: 0;
+}
+.saved-view-form,
+.saved-view-chips,
+.saved-view-chip {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.saved-view-form .input {
+  max-width: 320px;
+  min-width: 0;
+}
+.saved-view-chips {
+  flex-wrap: wrap;
+}
+.review-slideshow {
+  background: var(--bg-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  width: 94vw;
+  max-width: 1800px;
+  height: 94dvh;
+  max-height: 94dvh;
+  padding: 16px;
+}
+.review-slideshow[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.review-slideshow::backdrop {
+  background: rgb(0 0 0 / 88%);
+}
+.review-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.review-toolbar small {
+  display: block;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.review-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.review-stage img,
+.review-stage video {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.review-blurred {
+  filter: blur(18px);
+}
+.review-footer {
+  display: grid;
+  gap: 10px;
+  text-align: center;
+}
+.review-caption {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.review-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+}
+.review-controls label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.review-controls .button {
+  width: auto;
+}
+.review-toolbar .button {
+  width: auto;
+}
+
+.saved-view-form {
+  flex-wrap: wrap;
+}
+.saved-view-chip {
+  width: 100%;
+  min-width: 0;
+}
+.saved-view-chip > button:first-child {
+  flex: 1;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.saved-view-chip > button:last-child {
+  min-width: 28px;
+  flex: none;
+  padding: 4px;
+}

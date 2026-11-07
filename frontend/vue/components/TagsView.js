@@ -155,7 +155,6 @@ export const TagsView = {
                 <div class="results tags-results">
                     <div class="meta-row tags-meta-row">
                         <div class="meta-group">
-                            <span class="status-dot" aria-hidden="true"></span>
                             <span>{{ tagStatusText }}</span>
                         </div>
                         <div class="count-badge">{{ tagCountText }}</div>
@@ -182,6 +181,8 @@ export const TagsView = {
                 aria-orientation="vertical"
                 aria-label="Resize details panel width"
                 title="Drag to resize details panel width"
+                tabindex="0"
+                @keydown.stop="startDetailsResize"
                 @mousedown="startDetailsResize"
             ></div>
             <TagDetailsPanel

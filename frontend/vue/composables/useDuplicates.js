@@ -40,7 +40,8 @@ export function useDuplicates(options) {
       return 'No scan yet';
     }
     const summary = duplicateSummary.value;
-    return `${summary.groups || 0} group(s) / ${summary.assets || 0} media item(s)`;
+    const count = summary.groups || 0;
+    return `${count} ${count === 1 ? 'group' : 'groups'} / ${summary.assets || 0} media files`;
   });
   const duplicateScanProgressText = computed(() => {
     const percent = Math.round(Number(duplicateScanProgress.value || 0));
@@ -77,7 +78,7 @@ export function useDuplicates(options) {
   }
 
   function duplicateGroupSubtitle(group) {
-    const parts = [`${group.count || 0} media item(s)`];
+    const parts = [`${group.count || 0} media files`];
     if (Number(group.wasted_bytes || 0) > 0) {
       parts.push(`${formatBytes(group.wasted_bytes)} reclaimable`);
     }
@@ -358,6 +359,7 @@ export function useDuplicates(options) {
   }
 
   async function scanDuplicates() {
+    const scanRoot = filters.root;
     if (!filters.root) {
       duplicateStatusText.value = 'Select a folder before scanning.';
       duplicateGroups.value = [];
@@ -396,13 +398,19 @@ export function useDuplicates(options) {
       if (!payload) {
         throw new Error('Duplicate scan did not return a result payload.');
       }
+      if (filters.root !== scanRoot) {
+        duplicateStatusText.value = 'Library changed. Run a new scan for this library.';
+        return;
+      }
       duplicateGroups.value = Array.isArray(payload.groups) ? payload.groups : [];
       duplicateSummary.value = payload.summary || null;
       duplicateScanProgress.value = 100;
       duplicateScanPhase.value = 'complete';
       duplicateTaskStatusText.value = duplicateTaskStatusText.value || 'completed';
       const groupCount = duplicateSummary.value?.groups || duplicateGroups.value.length;
-      duplicateStatusText.value = groupCount ? `Found ${groupCount} duplicate group(s).` : 'No duplicates found.';
+      duplicateStatusText.value = groupCount
+        ? `Found ${groupCount} duplicate ${groupCount === 1 ? 'group' : 'groups'}.`
+        : 'No duplicates found.';
     } catch (error) {
       console.error(error);
       duplicateGroups.value = [];

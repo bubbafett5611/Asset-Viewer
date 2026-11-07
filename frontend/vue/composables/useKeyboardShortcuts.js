@@ -45,6 +45,13 @@ export function useKeyboardShortcuts(options) {
   } = options;
 
   function onDocumentKeydown(event) {
+    const menu = event.target.closest?.('details.action-menu[open]');
+    if (event.key === 'Escape' && menu) {
+      menu.open = false;
+      menu.querySelector('summary')?.focus();
+      event.preventDefault();
+      return;
+    }
     if (event.defaultPrevented || isTypingTarget(event.target)) {
       return;
     }

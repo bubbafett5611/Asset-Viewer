@@ -4,6 +4,7 @@ from io import BytesIO
 import json
 import os
 from pathlib import Path
+import sqlite3
 import sys
 import threading
 import time
@@ -17,6 +18,7 @@ sys.path.insert(0, "backend")
 import server  # noqa: E402
 from services import app_context  # noqa: E402
 from services import asset_api  # noqa: E402
+from services import asset_viewer_duplicates  # noqa: E402
 from services import asset_viewer_metadata  # noqa: E402
 from services import tag_api  # noqa: E402
 from asset_viewer import AssetRoot  # noqa: E402
@@ -283,6 +285,20 @@ def test_packaged_report_cache_uses_appdata(tmp_path, monkeypatch):
     assert asset_root_path not in cache_path.parents
 
 
+def test_packaged_asset_index_cache_uses_appdata(tmp_path, monkeypatch):
+    appdata_dir = tmp_path / "AppData" / "Roaming"
+    asset_root_path = tmp_path / "assets"
+    asset_root_path.mkdir()
+    monkeypatch.setenv("APPDATA", str(appdata_dir))
+    monkeypatch.delenv(runtime_paths.DATA_DIR_ENV, raising=False)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+
+    cache_path = runtime_paths.asset_index_cache_file(str(asset_root_path))
+
+    assert cache_path.parent.parent == appdata_dir / runtime_paths.APP_NAME / "cache" / "asset-indexes"
+    assert asset_root_path not in cache_path.parents
+
+
 def test_asset_list_filters_sorts_and_paginates(client, asset_root):
     (asset_root / "b.png").write_bytes(make_png_bytes().getvalue())
     (asset_root / "a.txt").write_text("not an image", encoding="utf-8")
@@ -292,6 +308,144 @@ def test_asset_list_filters_sorts_and_paginates(client, asset_root):
     assert response.status_code == 200
     payload = response.get_json()
     assert [item["name"] for item in payload["assets"]] == ["b.png"]
+
+
+def test_asset_list_filters_mp4_and_sorts_by_extension(client, asset_root):
+    (asset_root / "clip.mp4").write_bytes(b"\x00\x00\x00\x18ftypisom\x00\x00\x00\x00")
+    (asset_root / "animation.gif").write_bytes(b"GIF89a")
+    (asset_root / "still.png").write_bytes(make_png_bytes().getvalue())
+
+    filtered = client.get("/api/assets/list?root=test&ext=.mp4&refresh_index=true")
+    sorted_response = client.get("/api/assets/list?root=test&sort_by=extension&sort_dir=asc")
+
+    assert [item["name"] for item in filtered.get_json()["assets"]] == ["clip.mp4"]
+    assert [item["extension"] for item in sorted_response.get_json()["assets"]] == [
+        ".gif",
+        ".mp4",
+        ".png",
+    ]
+
+
+def test_asset_list_creates_and_uses_index_cache(client, asset_root):
+    (asset_root / "first.png").write_bytes(make_png_bytes().getvalue())
+
+    first = client.get("/api/assets/list?root=test&limit=10&sort_by=name&sort_dir=asc")
+
+    assert first.status_code == 200
+    first_payload = first.get_json()
+    assert first_payload["cache"] == {"used": False, "indexed": True}
+    assert [item["name"] for item in first_payload["assets"]] == ["first.png"]
+    assert (asset_root / ".asset_viewer_reports" / "asset_index.sqlite").exists()
+
+    (asset_root / "second.png").write_bytes(make_png_bytes().getvalue())
+    cached = client.get("/api/assets/list?root=test&limit=10&sort_by=name&sort_dir=asc")
+
+    assert cached.status_code == 200
+    cached_payload = cached.get_json()
+    assert cached_payload["cache"] == {"used": True, "indexed": True}
+    assert [item["name"] for item in cached_payload["assets"]] == ["first.png"]
+
+    refreshed = client.get("/api/assets/list?root=test&limit=10&sort_by=name&sort_dir=asc&refresh_index=true")
+
+    assert refreshed.status_code == 200
+    refreshed_payload = refreshed.get_json()
+    assert refreshed_payload["cache"] == {"used": False, "indexed": True}
+    assert [item["name"] for item in refreshed_payload["assets"]] == ["first.png", "second.png"]
+
+
+def test_asset_list_filters_by_folder(client, asset_root):
+    nested = asset_root / "Batch A" / "Nested"
+    nested.mkdir(parents=True)
+    sibling = asset_root / "Batch B"
+    sibling.mkdir()
+    (asset_root / "root.png").write_bytes(make_png_bytes().getvalue())
+    (nested / "nested.png").write_bytes(make_png_bytes().getvalue())
+    (sibling / "sibling.png").write_bytes(make_png_bytes().getvalue())
+
+    response = client.get("/api/assets/list?root=test&folder=Batch%20A&sort_by=name&sort_dir=asc")
+
+    assert response.status_code == 200
+    assert [item["name"] for item in response.get_json()["assets"]] == ["nested.png"]
+
+
+def test_asset_folders_lists_root_and_subfolders(client, asset_root):
+    (asset_root / "Batch A" / "Nested").mkdir(parents=True)
+    (asset_root / "Batch B").mkdir()
+    (asset_root / ".asset_viewer_reports").mkdir()
+    (asset_root / ".asset_viewer_reports" / "asset_index.sqlite").write_text("", encoding="utf-8")
+
+    response = client.get("/api/assets/folders?root=test")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["folders"] == [
+        {"path": "", "label": "root", "depth": 0},
+        {"path": "Batch A", "label": "Batch A", "depth": 1},
+        {"path": os.path.join("Batch A", "Nested"), "label": "Nested", "depth": 2},
+        {"path": "Batch B", "label": "Batch B", "depth": 1},
+    ]
+
+
+def test_create_folder_under_selected_folder(client, asset_root):
+    (asset_root / "Parent").mkdir()
+
+    response = client.post(
+        "/api/assets/folders",
+        json={"root": "test", "parent": "Parent", "name": "New Batch"},
+    )
+
+    assert response.status_code == 201
+    assert response.get_json()["folder"]["path"] == "Parent/New Batch"
+    assert (asset_root / "Parent" / "New Batch").is_dir()
+
+
+@pytest.mark.parametrize("name", ["../escape", ".asset_viewer_reports", ".."])
+def test_create_folder_rejects_unsafe_names(client, asset_root, name):
+    response = client.post(
+        "/api/assets/folders",
+        json={"root": "test", "parent": "", "name": name},
+    )
+
+    assert response.status_code == 400
+
+
+def test_move_selected_assets_updates_files_and_index(client, asset_root):
+    destination = asset_root / "Sorted"
+    destination.mkdir()
+    first = asset_root / "first.png"
+    second = asset_root / "second.png"
+    first.write_bytes(make_png_bytes().getvalue())
+    second.write_bytes(make_png_bytes().getvalue())
+    client.get("/api/assets/list?root=test")
+
+    response = client.post(
+        "/api/assets/move",
+        json={"root": "test", "folder": "Sorted", "paths": [str(first), str(second)]},
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert len(payload["moved"]) == 2
+    assert not first.exists()
+    assert (destination / "first.png").exists()
+    listed = client.get("/api/assets/list?root=test&folder=Sorted&sort_by=name&sort_dir=asc").get_json()
+    assert [item["name"] for item in listed["assets"]] == ["first.png", "second.png"]
+
+
+def test_move_asset_renames_on_collision(client, asset_root):
+    destination = asset_root / "Sorted"
+    destination.mkdir()
+    source = asset_root / "same.png"
+    source.write_bytes(make_png_bytes().getvalue())
+    (destination / "same.png").write_bytes(make_png_bytes().getvalue())
+
+    response = client.post(
+        "/api/assets/move",
+        json={"root": "test", "folder": "Sorted", "paths": [str(source)]},
+    )
+
+    assert response.status_code == 200
+    assert (destination / "same_1.png").exists()
 
 
 def test_asset_list_defaults_to_most_recent_first(client, asset_root):
@@ -524,6 +678,51 @@ def test_duplicate_scan_finds_exact_pixel_and_near_matches(client, asset_root):
     assert {asset["name"] for asset in exact_group["assets"]} == {"exact-a.png", "exact-b.png"}
 
 
+def test_duplicate_scan_reuses_cached_content_hashes(client, asset_root, monkeypatch):
+    exact_bytes = make_png_bytes((255, 0, 0, 255)).getvalue()
+    (asset_root / "cached-a.png").write_bytes(exact_bytes)
+    (asset_root / "cached-b.png").write_bytes(exact_bytes)
+
+    first = client.get("/api/assets/duplicates?root=test")
+
+    assert first.status_code == 200
+    assert first.get_json()["summary"]["exact_groups"] == 1
+
+    index_path = asset_root / ".asset_viewer_reports" / "asset_index.sqlite"
+    with sqlite3.connect(index_path) as connection:
+        cached_hash_count = connection.execute(
+            "SELECT COUNT(*) FROM assets WHERE content_hash IS NOT NULL"
+        ).fetchone()[0]
+    assert cached_hash_count == 2
+
+    monkeypatch.setattr(asset_viewer_duplicates, "_sha256_file", lambda *args, **kwargs: None)
+    second = client.get("/api/assets/duplicates?root=test")
+
+    assert second.status_code == 200
+    assert second.get_json()["summary"]["exact_groups"] == 1
+
+
+def test_duplicate_scan_caches_large_dhash_values(client, asset_root, monkeypatch):
+    (asset_root / "large-dhash-a.png").write_bytes(make_png_bytes((20, 20, 20, 255)).getvalue())
+    (asset_root / "large-dhash-b.png").write_bytes(make_png_bytes((24, 24, 24, 255)).getvalue())
+    large_dhash = 2**63 + 123
+
+    monkeypatch.setattr(asset_viewer_duplicates, "_dhash", lambda *args, **kwargs: large_dhash)
+
+    response = client.get("/api/assets/duplicates?root=test&include_near=true&near_threshold=2")
+
+    assert response.status_code == 200
+    index_path = asset_root / ".asset_viewer_reports" / "asset_index.sqlite"
+    with sqlite3.connect(index_path) as connection:
+        stored_dhashes = [
+            row[0]
+            for row in connection.execute(
+                "SELECT dhash FROM assets WHERE dhash IS NOT NULL ORDER BY name"
+            ).fetchall()
+        ]
+    assert stored_dhashes == [str(large_dhash), str(large_dhash)]
+
+
 def test_duplicate_scan_rejects_invalid_numeric_params(client):
     response = client.get("/api/assets/duplicates?root=test&near_threshold=bad")
 
@@ -649,7 +848,8 @@ def test_details_normalizes_bubba_nodes_metadata(client, asset_root):
                 '"steps":"20","cfg":"7.5","sampler_name":"euler","scheduler":"karras",'
                 '"denoise":"0.8","seed":"42","positive_prompt":" prompt ",'
                 '"negative_prompt":" negative ","loras":"a.safetensors, b.safetensors",'
-                '"filepath":"Character/Scene"}'
+                '"lora_strengths":[[0.8,0.5]],"vae_name":"vae.safetensors","width":"832","height":1216,'
+                '"notes":" note ","save_prefix":"Character/Scene","filepath":"Character/Scene"}'
             )
         ).getvalue()
     )
@@ -672,6 +872,13 @@ def test_details_normalizes_bubba_nodes_metadata(client, asset_root):
         "positive_prompt": "prompt",
         "negative_prompt": "negative",
         "loras": ["a.safetensors", "b.safetensors"],
+        "lora_strengths": [[0.8, 0.5], [1.0, 1.0]],
+        "vae_name": "vae.safetensors",
+        "clip_name": "",
+        "width": 832,
+        "height": 1216,
+        "notes": "note",
+        "save_prefix": "Character/Scene",
         "filepath": "Character/Scene",
     }
 
@@ -714,6 +921,25 @@ def test_upload_rejects_non_images_and_delete_removes_uploaded_image(client, ass
     assert delete_response.status_code == 200
     assert delete_response.get_json()["deleted"] == [uploaded[0]["path"]]
     assert not (asset_root / "upload.png").exists()
+
+
+def test_upload_accepts_mp4_media(client, asset_root):
+    mp4 = {
+        "files": (
+            BytesIO(b"\x00\x00\x00\x18ftypisom\x00\x00\x00\x00"),
+            "clip.mp4",
+        )
+    }
+
+    response = client.post(
+        "/bubba/assets/upload?root=test",
+        data=mp4,
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["uploaded"][0]["extension"] == ".mp4"
+    assert (asset_root / "clip.mp4").exists()
 
 
 def test_delete_safe_mode_moves_file_to_trash(client, asset_root):

@@ -24,6 +24,29 @@ function Write-LogOutput {
     }
 }
 
+function Invoke-LoggedNativeCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$ArgumentList
+    )
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $FilePath @ArgumentList 2>&1 | Write-LogOutput
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    if ($exitCode -ne 0) {
+        throw "Command failed with exit code ${exitCode}: $FilePath $($ArgumentList -join ' ')"
+    }
+}
+
 # Header
 "=== Bubba Media Viewer Build Process ===" | Write-LogOutput
 "Build started: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Write-LogOutput
@@ -81,47 +104,53 @@ if ($Clean) {
 }
 
 "Installing/updating pip..." | Write-LogOutput
-& $Python -m pip install --upgrade pip 2>&1 | Write-LogOutput
+Invoke-LoggedNativeCommand $Python -m pip install --upgrade pip
 "" | Write-LogOutput
 
 "Installing Python dependencies..." | Write-LogOutput
-& $Python -m pip install -r requirements.txt -r requirements-build.txt 2>&1 | Write-LogOutput
+Invoke-LoggedNativeCommand $Python -m pip install -r requirements.txt -r requirements-build.txt
 "" | Write-LogOutput
 
 if (-not $SkipChecks) {
+    "Installing browser test dependencies..." | Write-LogOutput
+    Invoke-LoggedNativeCommand $Python -m pip install -r requirements-dev.txt
+    if (-not $env:PLAYWRIGHT_BROWSERS_PATH) {
+        $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $Root "build\browsers"
+    }
+    Invoke-LoggedNativeCommand $Python -m playwright install chromium
+
     "Running ruff checks..." | Write-LogOutput
-    & $Python -m ruff check . 2>&1 | Write-LogOutput
+    Invoke-LoggedNativeCommand $Python -m ruff check .
     "" | Write-LogOutput
     
     "Running mypy type checks..." | Write-LogOutput
-    & $Python -m mypy 2>&1 | Write-LogOutput
+    Invoke-LoggedNativeCommand $Python -m mypy
     "" | Write-LogOutput
     
     "Running pytest..." | Write-LogOutput
-    & $Python -m pytest -q --basetemp=.pytest_tmp 2>&1 | Write-LogOutput
+    Invoke-LoggedNativeCommand $Python -m pytest -q --basetemp=.pytest_tmp
     "" | Write-LogOutput
 
     "Installing frontend dependencies..." | Write-LogOutput
     if (Test-Path (Join-Path $Root "package-lock.json")) {
-        npm ci 2>&1 | Write-LogOutput
+        Invoke-LoggedNativeCommand "npm.cmd" ci
     } else {
-        npm install 2>&1 | Write-LogOutput
+        Invoke-LoggedNativeCommand "npm.cmd" install
     }
     "" | Write-LogOutput
     
     "Running eslint..." | Write-LogOutput
-    npm run lint:frontend 2>&1 | Write-LogOutput
+    Invoke-LoggedNativeCommand "npm.cmd" run lint:frontend
     "" | Write-LogOutput
     
     "Checking prettier formatting..." | Write-LogOutput
-    npm run format:frontend:check 2>&1 | Write-LogOutput
+    Invoke-LoggedNativeCommand "npm.cmd" run format:frontend:check
+    Invoke-LoggedNativeCommand "npm.cmd" run test:frontend
     "" | Write-LogOutput
 }
 
 "Building with PyInstaller..." | Write-LogOutput
-$ErrorActionPreference = "Continue"
-& $Python -m PyInstaller --noconfirm $SpecPath 2>&1 | Write-LogOutput
-$ErrorActionPreference = "Stop"
+Invoke-LoggedNativeCommand $Python -m PyInstaller --noconfirm $SpecPath
 "" | Write-LogOutput
 
 # Check if build succeeded by looking for output files

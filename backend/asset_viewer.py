@@ -22,6 +22,8 @@ except Exception:  # pragma: no cover - Pillow is expected in Comfy runtime but 
 
 
 ALLOWED_UPLOAD_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
+ALLOWED_UPLOAD_VIDEO_EXTENSIONS = {".mp4"}
+ALLOWED_UPLOAD_MEDIA_EXTENSIONS = ALLOWED_UPLOAD_IMAGE_EXTENSIONS | ALLOWED_UPLOAD_VIDEO_EXTENSIONS
 NEAR_DUPLICATE_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
 MODEL_EXTENSIONS = {".safetensors", ".ckpt", ".pt", ".pth", ".onnx"}
 REPORT_CACHE_DIRNAME = ".asset_viewer_reports"
@@ -74,6 +76,13 @@ BUBBA_METADATA_DEFAULTS: dict[str, Any] = {
 	"positive_prompt": "",
 	"negative_prompt": "",
 	"loras": [],
+	"lora_strengths": [],
+	"vae_name": "",
+	"clip_name": "",
+	"width": 0,
+	"height": 0,
+	"notes": "",
+	"save_prefix": "",
 	"filepath": "",
 }
 
@@ -197,29 +206,41 @@ def _coerce_loras(value: Any) -> list[str]:
 	return []
 
 
+def _coerce_lora_strengths(value: Any, count: int) -> list[list[float]]:
+	pairs: list[list[float]] = []
+	for item in value if isinstance(value, list) else []:
+		try:
+			model_strength, clip_strength = (float(x) for x in item)
+		except (TypeError, ValueError):
+			model_strength = clip_strength = 1.0
+		pairs.append([model_strength, clip_strength])
+	return (pairs + [[1.0, 1.0]] * count)[:count]
+
+
 def _coerce_bubba_metadata(value: Any) -> dict[str, Any]:
 	payload = _parse_json_text(value) if isinstance(value, str) else value
 	if not isinstance(payload, dict):
 		payload = {}
 
 	normalized = dict(BUBBA_METADATA_DEFAULTS)
-	for key in ["model_name", "sampler_name", "scheduler", "positive_prompt", "negative_prompt", "filepath"]:
+	for key in ["model_name", "sampler_name", "scheduler", "positive_prompt", "negative_prompt", "filepath", "save_prefix", "vae_name", "clip_name", "notes"]:
 		normalized[key] = _sanitize_text(payload.get(key, ""), max_len=6000 if key.endswith("_prompt") else 800)
 
-	for key in ["steps", "seed", "clip_skip"]:
+	for key in ["steps", "seed", "clip_skip", "width", "height"]:
 		normalized[key] = _coerce_non_negative_int(payload.get(key))
 
 	for key in ["cfg", "sampler_time_seconds"]:
 		normalized[key] = _coerce_non_negative_float(payload.get(key))
 	normalized["denoise"] = _coerce_non_negative_float(payload.get("denoise"), max_value=1.0)
 	normalized["loras"] = _coerce_loras(payload.get("loras"))
+	normalized["lora_strengths"] = _coerce_lora_strengths(payload.get("lora_strengths"), len(normalized["loras"]))
 	return normalized
 
 
 def _has_bubba_generation_metadata(metadata: Any) -> bool:
 	if not isinstance(metadata, dict):
 		return False
-	return any(metadata.get(key) != default for key, default in BUBBA_METADATA_DEFAULTS.items() if key != "filepath")
+	return any(metadata.get(key) != default for key, default in BUBBA_METADATA_DEFAULTS.items() if key not in ("filepath", "save_prefix"))
 
 
 def _resolve_prompt_ref(prompt_graph: dict[str, Any], ref: Any) -> dict[str, Any] | None:
@@ -811,6 +832,11 @@ def scan_duplicate_assets(
 ) -> dict[str, Any]:
 	from services.asset_viewer_duplicates import scan_duplicate_assets as _scan_duplicate_assets
 
+	try:
+		refresh_asset_index(root)
+	except Exception:
+		logger.exception("Asset index refresh failed before duplicate scan: %s", root)
+
 	return _scan_duplicate_assets(
 		root,
 		scan_assets,
@@ -822,6 +848,8 @@ def scan_duplicate_assets(
 		limit=limit,
 		progress_callback=progress_callback,
 		cancel_check=cancel_check,
+		get_cached_hashes_fn=lambda path: get_duplicate_hashes(root, path),
+		update_cached_hashes_fn=lambda path, hashes: update_duplicate_hashes(root, path, hashes),
 	)
 
 
@@ -840,6 +868,7 @@ def scan_assets(
 	modified_after_ts: float | None = None,
 	metadata_mode: str = METADATA_MODE_ALL,
 	metadata_badge_filter: list[str] | None = None,
+	folder: str = "",
 ) -> list[dict[str, Any]]:
 	from services.asset_viewer_scanning import ScanRuntime, scan_assets as _scan_assets
 
@@ -871,4 +900,101 @@ def scan_assets(
 		modified_after_ts=modified_after_ts,
 		metadata_mode=metadata_mode,
 		metadata_badge_filter=metadata_badge_filter,
+		folder=folder,
 	)
+
+
+def _asset_index_runtime():
+	from services.asset_index import AssetIndexRuntime
+
+	return AssetIndexRuntime(
+		summarize_metadata=summarize_metadata,
+		detect_metadata_badges=_detect_metadata_badges,
+		has_bubba_generation_metadata=_has_bubba_generation_metadata,
+		is_path_within_root=_is_path_within_root,
+		metadata_mode_all=METADATA_MODE_ALL,
+		valid_metadata_modes=VALID_METADATA_MODES,
+		badge_key_no_tracked_metadata=BADGE_KEY_NO_TRACKED_METADATA,
+		valid_metadata_badge_keys=VALID_METADATA_BADGE_KEYS,
+	)
+
+
+def refresh_asset_index(root: str) -> dict[str, int]:
+	from services.asset_index import refresh_asset_index as _refresh_asset_index
+
+	return _refresh_asset_index(root, _asset_index_runtime())
+
+
+def index_has_assets(root: str) -> bool:
+	from services.asset_index import index_has_assets as _index_has_assets
+
+	return _index_has_assets(root)
+
+
+def list_indexed_assets(
+	root: str,
+	query: str = "",
+	extensions: list[str] | None = None,
+	limit: int = 600,
+	include_metadata: bool = True,
+	offset: int = 0,
+	search_in_metadata: bool = True,
+	sort_by: str = "modified",
+	sort_dir: str = "desc",
+	min_size_bytes: int | None = None,
+	max_size_bytes: int | None = None,
+	modified_after_ts: float | None = None,
+	metadata_mode: str = METADATA_MODE_ALL,
+	metadata_badge_filter: list[str] | None = None,
+	folder: str = "",
+) -> list[dict[str, Any]] | None:
+	from services.asset_index import list_indexed_assets as _list_indexed_assets
+
+	return _list_indexed_assets(
+		root=root,
+		runtime=_asset_index_runtime(),
+		query=query,
+		extensions=extensions,
+		limit=limit,
+		include_metadata=include_metadata,
+		offset=offset,
+		search_in_metadata=search_in_metadata,
+		sort_by=sort_by,
+		sort_dir=sort_dir,
+		min_size_bytes=min_size_bytes,
+		max_size_bytes=max_size_bytes,
+		modified_after_ts=modified_after_ts,
+		metadata_mode=metadata_mode,
+		metadata_badge_filter=metadata_badge_filter,
+		folder=folder,
+	)
+
+
+def upsert_asset_in_index(root: str, path: str) -> None:
+	from services.asset_index import upsert_asset_in_index as _upsert_asset_in_index
+
+	_upsert_asset_in_index(root, path, _asset_index_runtime())
+
+
+def delete_assets_from_index(root: str, paths: list[str]) -> None:
+	from services.asset_index import delete_assets_from_index as _delete_assets_from_index
+
+	_delete_assets_from_index(root, paths)
+
+
+def get_duplicate_hashes(root: str, path: str) -> dict[str, Any] | None:
+	from services.asset_index import get_duplicate_hashes as _get_duplicate_hashes
+
+	return _get_duplicate_hashes(root, path)
+
+
+def update_duplicate_hashes(root: str, path: str, hashes: dict[str, Any]) -> None:
+	from services.asset_index import update_duplicate_hashes as _update_duplicate_hashes
+
+	_update_duplicate_hashes(root, path, hashes)
+
+
+def list_asset_folders(root: str) -> list[dict[str, Any]]:
+	from services.asset_index import list_asset_folders as _list_asset_folders
+
+	return _list_asset_folders(root)

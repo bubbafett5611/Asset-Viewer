@@ -110,10 +110,12 @@ export function useSelection(options) {
   }
 
   function clearSelection() {
+    selectedAsset.value = null;
+    selectedPath.value = '';
     replaceSelectedPaths([]);
     lastSelectedIndex.value = -1;
     lastSelectedDuplicateIndex.value = -1;
-    statusText.value = `Loaded ${assets.value.length} media item(s).`;
+    statusText.value = `Loaded ${assets.value.length} ${assets.value.length === 1 ? 'item' : 'items'}.`;
   }
 
   function selectAllAssets() {

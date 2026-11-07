@@ -17,10 +17,14 @@ export const AssetDetailsPanel = {
   emits: ['delete-asset', 'open-folder', 'repair-metadata', 'resize-preview'],
   setup(props) {
     const previewableExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tif', '.tiff']);
+    const videoExtensions = new Set(['.mp4']);
     const isPreviewableAsset = computed(() =>
       previewableExtensions.has(String(props.selectedAsset?.extension || '').toLowerCase())
     );
     const canRepairMetadata = computed(() => String(props.selectedAsset?.extension || '').toLowerCase() === '.png');
+    const isVideoAsset = computed(() =>
+      videoExtensions.has(String(props.selectedAsset?.extension || '').toLowerCase())
+    );
 
     const hasValue = (value) => {
       if (value === null || value === undefined) {
@@ -110,11 +114,41 @@ export const AssetDetailsPanel = {
         addGenerationFieldFromKeys('scheduler', ['scheduler']);
         addGenerationFieldFromKeys('denoise', ['denoise', 'denoise_strength']);
         addGenerationFieldFromKeys('time_seconds', ['sampler_time_seconds', 'time_seconds']);
-        addGenerationFieldFromKeys('loras', ['loras']);
+        const loraNames = Array.isArray(generationSource.loras) ? generationSource.loras : [];
+        const loraStrengths = Array.isArray(generationSource.lora_strengths) ? generationSource.lora_strengths : [];
+        if (loraNames.length && loraStrengths.length) {
+          generationPairs.push([
+            'loras',
+            loraNames
+              .map((name, index) => {
+                const [modelStrength, clipStrength] = loraStrengths[index] || [1, 1];
+                return `${name} (${modelStrength === clipStrength ? modelStrength : `${modelStrength}/${clipStrength}`})`;
+              })
+              .join(', ')
+          ]);
+        } else {
+          addGenerationFieldFromKeys('loras', ['loras']);
+        }
+        addGenerationFieldFromKeys('vae', ['vae_name']);
+        addGenerationFieldFromKeys('clip', ['clip_name']);
+        if (generationSource.width > 0 && generationSource.height > 0) {
+          generationPairs.push(['size', `${generationSource.width}x${generationSource.height}`]);
+        }
         addGenerationFieldFromKeys('sampler_info', ['sampler_info']);
         addGenerationFieldFromKeys('positive_prompt', ['positive_prompt', 'prompt']);
         addGenerationFieldFromKeys('negative_prompt', ['negative_prompt', 'negative']);
         addGenerationFieldFromKeys('prompt_sections', ['prompt_sections']);
+        const xySweep = /^XY sweep (.+)$/.exec(String(generationSource.notes || '').trim());
+        if (xySweep) {
+          const [xAxis, yAxis] = xySweep[1].split(' | ');
+          generationPairs.push(['xy_sweep_x', xAxis]);
+          if (yAxis) {
+            generationPairs.push(['xy_sweep_y', yAxis]);
+          }
+        } else {
+          addGenerationFieldFromKeys('notes', ['notes']);
+        }
+        addGenerationFieldFromKeys('save_prefix', ['save_prefix']);
         addGenerationFieldFromKeys('filepath', ['filepath', 'file', 'path']);
       }
 
@@ -134,6 +168,13 @@ export const AssetDetailsPanel = {
           'positive_prompt',
           'negative_prompt',
           'loras',
+          'lora_strengths',
+          'vae_name',
+          'clip_name',
+          'width',
+          'height',
+          'notes',
+          'save_prefix',
           'prompt_sections',
           'filepath'
         ]);
@@ -215,6 +256,7 @@ export const AssetDetailsPanel = {
       formatBytes,
       formatDate,
       isPreviewableAsset,
+      isVideoAsset,
       canRepairMetadata,
       metadataSummary,
       openFull,
@@ -225,7 +267,7 @@ export const AssetDetailsPanel = {
         <aside class="panel asset-details-panel details">
             <div class="details-header">
                 <div class="details-title-row">
-                    <h2>Media Details</h2>
+                    <h2>Inspector</h2>
                     <span v-if="selectedAsset" :class="metadataSummary.metadataBadgeClass">{{ metadataSummary.metadataBadgeText }}</span>
                 </div>
                 <p class="details-subtitle">{{ selectedAsset ? selectedAsset.name : 'Select an item to inspect file info and embedded metadata.' }}</p>
@@ -234,16 +276,26 @@ export const AssetDetailsPanel = {
             <div class="preview">
                 <div class="preview-frame">
                     <img v-if="selectedAsset && isPreviewableAsset" :src="fileUrl(selectedAsset.path)" :alt="selectedAsset.name" />
-                    <div v-else-if="selectedAsset" class="preview-empty">No image preview</div>
+                    <video
+                        v-else-if="selectedAsset && isVideoAsset"
+                        :src="fileUrl(selectedAsset.path)"
+                        :aria-label="selectedAsset.name"
+                        controls
+                        playsinline
+                        preload="metadata"
+                    ></video>
+                    <div v-else-if="selectedAsset" class="preview-empty">No media preview</div>
                     <div v-else class="preview-empty">No media selected</div>
                 </div>
                 <div v-if="selectedAsset" class="preview-actions">
-                    <button type="button" class="preview-action" @click="openFull">Open Full</button>
-                    <button type="button" class="preview-action" @click="$emit('open-folder', selectedAsset)">Open Folder</button>
-                    <button type="button" class="preview-action" @click="copyText(selectedAsset.path)">Copy Path</button>
-                    <button type="button" class="preview-action" :disabled="!metadataSummary.copyPromptValue" @click="copyText(metadataSummary.copyPromptValue)">Copy Prompt</button>
-                    <button type="button" class="preview-action" :disabled="!metadataSummary.copySeedValue" @click="copyText(metadataSummary.copySeedValue)">Copy Seed</button>
-                    <button type="button" class="preview-action" :disabled="!canRepairMetadata" @click="$emit('repair-metadata', selectedAsset)">Repair Metadata</button>
+                    <button type="button" class="preview-action" @click="openFull">Open full size</button>
+                    <button type="button" class="preview-action" @click="$emit('open-folder', selectedAsset)">Open folder</button>
+                    <button type="button" class="preview-action" @click="copyText(selectedAsset.path)">Copy path</button>
+                    <details class="action-menu"><summary>Metadata actions</summary><div class="action-menu-panel">
+                    <button type="button" class="preview-action" :disabled="!metadataSummary.copyPromptValue" @click="copyText(metadataSummary.copyPromptValue)">Copy prompt</button>
+                    <button type="button" class="preview-action" :disabled="!metadataSummary.copySeedValue" @click="copyText(metadataSummary.copySeedValue)">Copy seed</button>
+                    <button type="button" class="preview-action" :disabled="!canRepairMetadata" @click="$emit('repair-metadata', selectedAsset)">Repair metadata</button>
+                    </div></details>
                     <button
                         type="button"
                         class="preview-action preview-action-danger"
@@ -258,40 +310,43 @@ export const AssetDetailsPanel = {
                 aria-orientation="horizontal"
                 aria-label="Resize preview height"
                 title="Drag to resize preview height"
+                tabindex="0"
+                @keydown.stop="$emit('resize-preview', $event)"
                 @mousedown="$emit('resize-preview', $event)"
             ></div>
 
             <div class="details-scroll">
                 <div v-if="selectedAsset" class="details-grid">
-                    <div class="details-section-title">File</div>
+                    <details open><summary>File</summary>
                     <div class="kv" v-for="pair in metadataSummary.filePairs" :key="'file-' + pair[0]">
                         <div class="kv-key">{{ pair[0] }}</div>
                         <div class="kv-value">{{ pair[1] }}</div>
                     </div>
 
-                    <template v-if="metadataSummary.generationPairs.length > 0">
-                        <div class="details-section-title">Generation</div>
+                    </details>
+                    <details open v-if="metadataSummary.generationPairs.length > 0">
+                        <summary>Generation</summary>
                         <div class="kv" v-for="pair in metadataSummary.generationPairs" :key="'gen-' + pair[0]">
                             <div class="kv-key">{{ pair[0] }}</div>
                             <div class="kv-value">{{ pair[1] }}</div>
                         </div>
-                    </template>
+                    </details>
 
-                    <template v-if="metadataSummary.extraBubbaPairs.length > 0">
-                        <div class="details-section-title">Bubba Extra</div>
+                    <details v-if="metadataSummary.extraBubbaPairs.length > 0">
+                        <summary>Bubba extra</summary>
                         <div class="kv" v-for="pair in metadataSummary.extraBubbaPairs" :key="'bubba-' + pair[0]">
                             <div class="kv-key">{{ pair[0] }}</div>
                             <div class="kv-value">{{ pair[1] }}</div>
                         </div>
-                    </template>
+                    </details>
 
-                    <template v-if="metadataSummary.metadataPairs.length > 0">
-                        <div class="details-section-title">Embedded Metadata</div>
+                    <details v-if="metadataSummary.metadataPairs.length > 0">
+                        <summary>Embedded metadata</summary>
                         <div class="kv" v-for="pair in metadataSummary.metadataPairs" :key="'meta-' + pair[0]">
                             <div class="kv-key">{{ pair[0] }}</div>
                             <div class="kv-value">{{ pair[1] }}</div>
                         </div>
-                    </template>
+                    </details>
 
                     <div v-if="metadataSummary.generationPairs.length === 0 && metadataSummary.metadataPairs.length === 0" class="empty-inline">
                         No metadata detected.

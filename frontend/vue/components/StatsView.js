@@ -95,7 +95,7 @@ export const StatsView = {
                             <div class="stats-block-header">
                                 <div>
                                     <h4>Metadata Coverage</h4>
-                                    <p v-if="report.metadataHealth">Scanned {{ report.metadataHealth.total_assets }} media item(s), including {{ report.metadataHealth.png_assets }} PNG files.</p>
+                                    <p v-if="report.metadataHealth">Scanned {{ report.metadataHealth.total_assets }} media files, including {{ report.metadataHealth.png_assets }} PNG files.</p>
                                     <p v-else>Scan PNG metadata coverage for this root.</p>
                                 </div>
                                 <div v-if="report.metadataHealth" class="stats-export-actions">

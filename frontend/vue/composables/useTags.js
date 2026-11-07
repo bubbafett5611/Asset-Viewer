@@ -72,7 +72,7 @@ export function useTags(options) {
   });
   const visibleTags = computed(() => filteredTags.value);
   const tagHasMore = computed(() => tagFilters.view === 'all' && tags.value.length < tagTotal.value);
-  const tagCountText = computed(() => `Showing ${visibleTags.value.length} of ${tagTotal.value} tag(s)`);
+  const tagCountText = computed(() => `Showing ${visibleTags.value.length} of ${tagTotal.value} tags`);
   const selectedTagAliases = computed(() => parseAliases(selectedTag.value?.aliases));
   const selectedTagExamples = computed(() => {
     if (!selectedTag.value) {
@@ -126,7 +126,7 @@ export function useTags(options) {
         : tagCategoriesList.value;
 
       hasLoadedTags.value = true;
-      tagStatusText.value = `Loaded ${tags.value.length} of ${tagTotal.value} tag(s).`;
+      tagStatusText.value = `Loaded ${tags.value.length} of ${tagTotal.value} tags.`;
 
       if (selectedTag.value) {
         const selectedId = tagIdentity(selectedTag.value);

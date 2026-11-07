@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 ALLOWED_UPLOAD_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
+ALLOWED_UPLOAD_MEDIA_EXTENSIONS = ALLOWED_UPLOAD_IMAGE_EXTENSIONS | {".mp4"}
 
 
 def safe_real_path(path: str) -> str:
@@ -122,7 +123,7 @@ def sanitize_upload_filename(filename: str, fallback: str = "upload.png") -> str
 
     stem = Path(raw_name).stem or "upload"
     ext = Path(raw_name).suffix.lower()
-    if ext not in ALLOWED_UPLOAD_IMAGE_EXTENSIONS:
+    if ext not in ALLOWED_UPLOAD_MEDIA_EXTENSIONS:
         ext = ".png"
 
     safe = f"{stem}{ext}"

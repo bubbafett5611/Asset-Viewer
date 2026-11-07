@@ -52,6 +52,21 @@ def api_assets_list():
     return asset_api.api_assets_list_handler()
 
 
+@assets_bp.route('/api/assets/folders', methods=['GET'])
+def api_assets_folders():
+    return asset_api.api_assets_folders_handler()
+
+
+@assets_bp.route('/api/assets/folders', methods=['POST'])
+def api_assets_create_folder():
+    return asset_api.api_assets_create_folder_handler()
+
+
+@assets_bp.route('/api/assets/move', methods=['POST'])
+def api_assets_move():
+    return asset_api.api_assets_move_handler()
+
+
 @assets_bp.route('/api/assets/metadata/health', methods=['GET'])
 def api_assets_metadata_health():
     return asset_api.api_assets_metadata_health_handler()

@@ -16,6 +16,8 @@ export function useAssets(options) {
     statusText,
     isLoading,
     isLoadingMore,
+    assetError,
+    paginationError,
     isUploading,
     isDeleting,
     safeDelete,
@@ -34,16 +36,40 @@ export function useAssets(options) {
     onSelectAsset
   } = options;
 
-  async function fetchAssets({ append = false, keepSelection = false } = {}) {
+  let requestId = 0;
+  let controller = null;
+  let loadedIdentity = '';
+  const queryIdentity = () =>
+    JSON.stringify([
+      filters.root,
+      filters.folder,
+      filters.q,
+      filters.ext,
+      filters.metadataBadge,
+      filters.sortBy,
+      filters.sortDir
+    ]);
+
+  async function fetchAssets({ append = false, keepSelection = false, refreshIndex = false } = {}) {
+    const id = ++requestId;
+    controller?.abort();
+    controller = new AbortController();
+    const identity = queryIdentity();
+    const isCurrent = () => id === requestId && identity === queryIdentity();
+    assetError.value = '';
+    paginationError.value = false;
     if (!filters.root) {
       assets.value = [];
+      isLoading.value = false;
+      isLoadingMore.value = false;
+      hasMore.value = false;
+      statusText.value = 'No library selected.';
       return;
     }
-
-    if (append) {
-      isLoadingMore.value = true;
-    } else {
-      isLoading.value = true;
+    const nextOffset = append ? offset.value + pageSize : 0;
+    isLoading.value = !append;
+    isLoadingMore.value = append;
+    if (!append) {
       statusText.value = 'Loading media...';
     }
 
@@ -51,25 +77,30 @@ export function useAssets(options) {
       const url = buildQuery(API.list, {
         root: filters.root,
         q: filters.q,
+        folder: filters.folder,
         ext: filters.ext,
         sort_by: filters.sortBy,
         sort_dir: filters.sortDir,
         metadata_badges: filters.metadataBadge,
         limit: pageSize,
-        offset: offset.value
+        offset: nextOffset,
+        refresh_index: refreshIndex ? 'true' : ''
       });
 
-      const response = await fetch(url);
+      const response = await fetch(url, { signal: controller.signal });
       if (!response.ok) {
         throw new Error(`Failed to load media (${response.status})`);
       }
 
       const payload = await response.json();
+      if (!isCurrent()) return;
       const incoming = Array.isArray(payload.assets) ? payload.assets : [];
 
+      offset.value = nextOffset;
+      loadedIdentity = identity;
       assets.value = append ? assets.value.concat(incoming) : incoming;
       hasMore.value = incoming.length === pageSize;
-      statusText.value = `Loaded ${assets.value.length} media item(s).`;
+      statusText.value = `Loaded ${assets.value.length} ${assets.value.length === 1 ? 'item' : 'items'}.`;
 
       if (!append && !keepSelection) {
         selectedAsset.value = null;
@@ -91,21 +122,31 @@ export function useAssets(options) {
       await nextTick();
       measureAssetList();
     } catch (error) {
-      console.error(error);
+      if (!isCurrent() || error.name === 'AbortError') return;
+      assetError.value = error?.message || 'Failed to load media.';
+      paginationError.value = append;
       statusText.value = error?.message || 'Failed to load media.';
     } finally {
-      isLoading.value = false;
-      isLoadingMore.value = false;
+      if (id === requestId) {
+        isLoading.value = false;
+        isLoadingMore.value = false;
+      }
     }
   }
 
   async function refreshAssets(options = {}) {
-    offset.value = 0;
-    await fetchAssets({ append: false, keepSelection: Boolean(options.keepSelection) });
+    const refreshOptions = options instanceof Event ? {} : options;
+    await fetchAssets({
+      append: false,
+      keepSelection: Boolean(refreshOptions.keepSelection),
+      refreshIndex: Boolean(refreshOptions.refreshIndex)
+    });
   }
 
   async function loadMore() {
-    offset.value += pageSize;
+    if (!hasMore.value || isLoading.value || isLoadingMore.value || loadedIdentity !== queryIdentity()) {
+      return;
+    }
     await fetchAssets({ append: true });
   }
 
@@ -157,8 +198,8 @@ export function useAssets(options) {
     isDeleteConfirmVisible.value = false;
     statusText.value =
       skipConfirm && !shouldSafeDelete
-        ? `Permanently deleting ${paths.length} media item(s)...`
-        : `Deleting ${paths.length} media item(s)...`;
+        ? `Permanently deleting ${paths.length} media files...`
+        : `Deleting ${paths.length} media files...`;
 
     try {
       const response = await fetch(API.delete, {
@@ -199,13 +240,13 @@ export function useAssets(options) {
       const deleteVerb = shouldSafeDelete ? 'Deleted' : 'Permanently deleted';
       statusText.value = errors
         ? `${deleteVerb} ${deleted}; ${errors} failed.`
-        : `${deleteVerb} ${deleted} media item(s).`;
+        : `${deleteVerb} ${deleted} media files.`;
       if (activeTab.value === 'duplicates') {
         duplicateStatusText.value = hasNewSelection
           ? `${selectedPaths.value.size} selected`
           : errors
             ? `${deleteVerb} ${deleted}; ${errors} failed.`
-            : `${deleteVerb} ${deleted} duplicate media item(s).`;
+            : `${deleteVerb} ${deleted} duplicate media files.`;
       }
     } catch (error) {
       console.error(error);
@@ -223,7 +264,7 @@ export function useAssets(options) {
 
     const allowedFiles = Array.from(files || []).filter(isAllowedImageFile);
     if (!allowedFiles.length) {
-      statusText.value = 'Only image files can be uploaded.';
+      statusText.value = 'Only supported image and video files can be uploaded.';
       return;
     }
 
@@ -233,7 +274,7 @@ export function useAssets(options) {
     }
 
     isUploading.value = true;
-    statusText.value = `Uploading ${allowedFiles.length} image(s) to ${currentRootLabel.value}...`;
+    statusText.value = `Uploading ${allowedFiles.length} images to ${currentRootLabel.value}...`;
 
     try {
       const response = await fetch(buildQuery(API.upload, { root: filters.root }), {
@@ -253,7 +294,7 @@ export function useAssets(options) {
           await onSelectAsset(refreshed);
         }
       }
-      statusText.value = `Uploaded ${uploaded.length} image(s)${skipped ? `; ${skipped} skipped` : ''}.`;
+      statusText.value = `Uploaded ${uploaded.length} media files${skipped ? `; ${skipped} skipped` : ''}.`;
     } catch (error) {
       console.error(error);
       statusText.value = error?.message || 'Upload failed.';
@@ -275,6 +316,7 @@ export function useAssets(options) {
           (String(item.type || '')
             .toLowerCase()
             .startsWith('image/') ||
+            String(item?.type || '').toLowerCase() === 'video/mp4' ||
             isAllowedImageFile(item.getAsFile?.()))
       );
     }
