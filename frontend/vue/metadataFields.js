@@ -24,7 +24,8 @@ export function buildMetadataSummary(selectedAsset, assetDetails) {
       metadataBadgeClass: 'metadata-status metadata-status-none',
       metadataBadgeText: 'No metadata detected',
       copyPromptValue: '',
-      copySeedValue: ''
+      copySeedValue: '',
+      isSweep: false
     };
   }
 
@@ -108,7 +109,23 @@ export function buildMetadataSummary(selectedAsset, assetDetails) {
     addGenerationFieldFromKeys('negative_prompt', ['negative_prompt', 'negative']);
     addGenerationFieldFromKeys('prompt_sections', ['prompt_sections']);
     const xySweep = /^XY sweep (.+)$/.exec(String(generationSource.notes || '').trim());
-    if (xySweep) {
+    if (Array.isArray(generationSource.sweep_x_labels) && generationSource.sweep_x_labels.length) {
+      generationPairs.push(['xy_sweep_x', generationSource.sweep_x_labels.join(', ')]);
+      if (Array.isArray(generationSource.sweep_y_labels) && generationSource.sweep_y_labels.length) {
+        generationPairs.push(['xy_sweep_y', generationSource.sweep_y_labels.join(', ')]);
+      }
+      const index = Number(generationSource.sweep_index);
+      if (Number.isInteger(index) && index >= 0) {
+        const columns = generationSource.sweep_x_labels.length;
+        const yLabel = (generationSource.sweep_y_labels || [])[Math.floor(index / columns)];
+        generationPairs.push([
+          'xy_cell',
+          [generationSource.sweep_x_labels[index % columns], yLabel].filter(Boolean).join(' · ')
+        ]);
+      } else {
+        generationPairs.push(['xy_cell', 'labelled sheet']);
+      }
+    } else if (xySweep) {
       const [xAxis, yAxis] = xySweep[1].split(' | ');
       generationPairs.push(['xy_sweep_x', xAxis]);
       if (yAxis) {
@@ -157,7 +174,14 @@ export function buildMetadataSummary(selectedAsset, assetDetails) {
       'notes',
       'save_prefix',
       'prompt_sections',
-      'filepath'
+      'filepath',
+      'sweep_id',
+      'sweep_x_labels',
+      'sweep_y_labels',
+      'sweep_index',
+      'content_rating',
+      'nsfw_score',
+      'nsfw_regions'
     ]);
 
     for (const [key, value] of Object.entries(bubbaMetadata)) {
@@ -202,7 +226,12 @@ export function buildMetadataSummary(selectedAsset, assetDetails) {
     generationSource && hasValue(generationSource.positive_prompt) ? String(generationSource.positive_prompt) : '';
   const copySeedValue = generationSource && hasValue(generationSource.seed) ? String(generationSource.seed) : '';
 
+  const isSweep = Boolean(
+    generationSource && (generationSource.sweep_id || /^XY sweep /.test(String(generationSource.notes || '').trim()))
+  );
+
   return {
+    isSweep,
     filePairs,
     generationPairs,
     extraBubbaPairs,

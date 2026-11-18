@@ -1,11 +1,33 @@
-import { computed, inject } from '/vendor/vue.esm-browser.prod.js';
+import { computed, inject, ref, watch } from '/vendor/vue.esm-browser.prod.js';
 import { formatBytes, formatDate } from '/vue/formatters.js';
-import { fileUrl } from '/vue/api.js';
+import { API, buildQuery, fileUrl } from '/vue/api.js';
+import { showToast } from '/vue/components/ToastHost.js';
+
+/** Clipboard write with a textarea fallback for contexts that refuse navigator.clipboard. */
+async function writeClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch (error) {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.select();
+    const copied = document.execCommand('copy');
+    area.remove();
+    if (!copied) throw error;
+  }
+}
 import { buildMetadataSummary } from '/vue/metadataFields.js';
 import { LIBRARY_KEY, searchToken } from '/vue/composables/useLibraryExtras.js';
+import { NsfwOverlay } from '/vue/components/NsfwOverlay.js';
 
 export const AssetDetailsPanel = {
   name: 'AssetDetailsPanel',
+  components: { NsfwOverlay },
   props: {
     selectedAsset: {
       type: Object,
@@ -16,7 +38,16 @@ export const AssetDetailsPanel = {
       default: null
     }
   },
-  emits: ['delete-asset', 'open-folder', 'repair-metadata', 'resize-preview', 'toggle-favorite', 'filter-by'],
+  emits: [
+    'delete-asset',
+    'open-folder',
+    'repair-metadata',
+    'resize-preview',
+    'toggle-favorite',
+    'filter-by',
+    'open-sweep',
+    'send-to'
+  ],
   setup(props) {
     const previewableExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tif', '.tiff']);
     const videoExtensions = new Set(['.mp4']);
@@ -69,11 +100,67 @@ export const AssetDetailsPanel = {
       );
     });
 
+    const generationSource = computed(() => {
+      const embedded = (props.assetDetails || props.selectedAsset)?.metadata?.metadata || {};
+      return embedded.bubba_metadata || embedded.generation || null;
+    });
+    const hasLoras = computed(() => {
+      const loras = generationSource.value?.loras;
+      return Array.isArray(loras) ? loras.length > 0 : Boolean(String(loras || '').trim());
+    });
+    const canCopyParameters = computed(() => {
+      const badges = props.assetDetails?.metadata_badges || props.selectedAsset?.metadata_badges || [];
+      return Boolean(generationSource.value) || badges.some((badge) => badge?.key === 'parameters');
+    });
+    const COPY_LABELS = {
+      workflow: 'ComfyUI workflow (paste it into the canvas)',
+      parameters: 'A1111 parameters',
+      lora_stack: 'LoRA stack'
+    };
+    const copyFormat = async (kind) => {
+      const asset = props.selectedAsset;
+      if (!asset?.path) return;
+      try {
+        const response = await fetch(buildQuery(API.copyFormats, { path: asset.path }));
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || payload.description || 'Could not read this image.');
+        const value = payload[kind];
+        if (!value) {
+          showToast({ message: `This image has no ${COPY_LABELS[kind]}.`, tone: 'warn' });
+          return;
+        }
+        await writeClipboard(value);
+        showToast({ message: `Copied ${COPY_LABELS[kind]}.`, tone: 'success' });
+      } catch (error) {
+        showToast({ message: error?.message || 'Copy failed.', tone: 'error' });
+      }
+    };
+
+    const revealed = ref(false);
+    watch(
+      () => props.selectedAsset?.path,
+      () => {
+        revealed.value = false;
+      }
+    );
+    const previewBlur = computed(() => {
+      if (!library || revealed.value) return null;
+      const asset = props.assetDetails?.path === props.selectedAsset?.path ? props.assetDetails : props.selectedAsset;
+      return library.blurFor(asset);
+    });
+    const nsfwVerdict = computed(() => (props.assetDetails || props.selectedAsset)?.nsfw || null);
+
     const isFavorite = computed(() => Boolean(props.assetDetails?.favorite ?? props.selectedAsset?.favorite));
 
     return {
       library,
       chipQuery,
+      copyFormat,
+      revealed,
+      previewBlur,
+      nsfwVerdict,
+      hasLoras,
+      canCopyParameters,
       hasWorkflow,
       isFavorite,
       fileUrl,
@@ -99,7 +186,9 @@ export const AssetDetailsPanel = {
 
             <div class="preview">
                 <div class="preview-frame">
-                    <img v-if="selectedAsset && isPreviewableAsset" :src="fileUrl(selectedAsset.path)" :alt="selectedAsset.name" />
+                    <img v-if="selectedAsset && isPreviewableAsset" :key="selectedAsset.path" :src="fileUrl(selectedAsset.path)" :alt="selectedAsset.name" :class="{ 'review-blurred': previewBlur && previewBlur.mode === 'image' }" />
+                    <NsfwOverlay v-if="selectedAsset && isPreviewableAsset && previewBlur && previewBlur.mode === 'regions'" :key="'nsfw-' + selectedAsset.path" fit="contain" :regions="previewBlur.regions" />
+                    <button v-if="selectedAsset && isPreviewableAsset && (previewBlur || revealed)" type="button" class="nsfw-reveal" :aria-pressed="revealed" @click="revealed = !revealed">{{ revealed ? 'Hide' : 'Reveal' }}</button>
                     <video
                         v-else-if="selectedAsset && isVideoAsset"
                         :src="fileUrl(selectedAsset.path)"
@@ -121,6 +210,7 @@ export const AssetDetailsPanel = {
                         @click="$emit('toggle-favorite', selectedAsset)"
                     >{{ isFavorite ? '★ Favorited' : '☆ Favorite' }}</button>
                     <button v-if="library && isPreviewableAsset" type="button" class="preview-action" title="Show visually similar images from this library" @click="library.findSimilar(selectedAsset)">≈ Find similar</button>
+                    <button v-if="metadataSummary.isSweep" type="button" class="preview-action" title="Show every cell of this XY sweep as a labelled grid" @click="$emit('open-sweep', selectedAsset)">▦ Sweep grid</button>
                     <button
                         v-if="library"
                         type="button"
@@ -129,12 +219,16 @@ export const AssetDetailsPanel = {
                         :title="hasWorkflow ? 'Queue the embedded workflow in ComfyUI again (same seed)' : 'No embedded ComfyUI workflow in this image'"
                         @click="library.queueInComfy(selectedAsset)"
                     >{{ library.comfyBusy ? 'Queuing…' : '↻ Re-queue in ComfyUI' }}</button>
+                    <button type="button" class="preview-action" title="Send to Discord or Immich" @click="$emit('send-to', selectedAsset)">Send to…</button>
                     <button type="button" class="preview-action" @click="openFull">Open full size</button>
                     <button type="button" class="preview-action" @click="$emit('open-folder', selectedAsset)">Open folder</button>
                     <button type="button" class="preview-action" @click="copyText(selectedAsset.path)">Copy path</button>
                     <details class="action-menu"><summary>Metadata actions</summary><div class="action-menu-panel">
                     <button type="button" class="preview-action" :disabled="!metadataSummary.copyPromptValue" @click="copyText(metadataSummary.copyPromptValue)">Copy prompt</button>
                     <button type="button" class="preview-action" :disabled="!metadataSummary.copySeedValue" @click="copyText(metadataSummary.copySeedValue)">Copy seed</button>
+                    <button type="button" class="preview-action" :disabled="!hasWorkflow" title="Copy the ComfyUI workflow JSON; paste it onto the ComfyUI canvas to load the graph" @click="copyFormat('workflow')">Copy for ComfyUI</button>
+                    <button type="button" class="preview-action" :disabled="!canCopyParameters" title="Copy an A1111-style parameters block" @click="copyFormat('parameters')">Copy for A1111</button>
+                    <button type="button" class="preview-action" :disabled="!hasLoras" title="Copy the LoRAs as lora tags with their strengths" @click="copyFormat('lora_stack')">Copy LoRA stack</button>
                     <button type="button" class="preview-action" :disabled="!canRepairMetadata" @click="$emit('repair-metadata', selectedAsset)">Repair metadata</button>
                     </div></details>
                     <button
@@ -162,6 +256,10 @@ export const AssetDetailsPanel = {
                     <div class="kv" v-for="pair in metadataSummary.filePairs" :key="'file-' + pair[0]">
                         <div class="kv-key">{{ pair[0] }}</div>
                         <div class="kv-value">{{ pair[1] }}</div>
+                    </div>
+                    <div v-if="nsfwVerdict" class="kv">
+                        <div class="kv-key">content</div>
+                        <div class="kv-value"><span class="nsfw-pill" :class="'nsfw-pill--' + nsfwVerdict.rating">{{ nsfwVerdict.rating }}</span> {{ Math.round(nsfwVerdict.score * 100) }}% · {{ nsfwVerdict.source === 'metadata' ? 'rated at save time' : 'viewer scan' }}</div>
                     </div>
 
                     </details>

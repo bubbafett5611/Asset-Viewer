@@ -3,6 +3,8 @@ import { AssetDetailsPanel } from '/vue/components/AssetDetailsPanel.js';
 import { SavedViews } from '/vue/components/SavedViews.js';
 import { ReviewSlideshow } from '/vue/components/ReviewSlideshow.js';
 import { SmartSearch } from '/vue/components/SmartSearch.js';
+import { SweepGrid } from '/vue/components/SweepGrid.js';
+import { SendDialog } from '/vue/components/SendDialog.js';
 import { LIBRARY_KEY } from '/vue/composables/useLibraryExtras.js';
 
 const dayKey = (ts) => {
@@ -30,7 +32,9 @@ export const AssetsView = {
     ReviewSlideshow,
     AssetCard,
     AssetDetailsPanel,
-    SmartSearch
+    SmartSearch,
+    SweepGrid,
+    SendDialog
   },
   inject: { library: { from: LIBRARY_KEY, default: null } },
   data() {
@@ -71,6 +75,24 @@ export const AssetsView = {
     activeCollection() {
       return this.filters.collection ? this.library?.collectionById(this.filters.collection) : null;
     },
+    cullCounts() {
+      const counts = { keep: 0, reject: 0, unrated: 0 };
+      for (const asset of this.assets)
+        counts[asset.rating === 'keep' || asset.rating === 'reject' ? asset.rating : 'unrated'] += 1;
+      return counts;
+    },
+    nsfwFilter() {
+      const match = /(?:^|\s)(-?is:(?:nsfw|sfw))(?:\s|$)/.exec(this.filters.q || '');
+      return match ? match[1] : '';
+    },
+    nsfwModelsReady() {
+      const models = this.library?.nsfw?.models;
+      return Boolean(models && models.onnxruntime && models.nudenet);
+    },
+    ratingFilter() {
+      const match = /(?:^|\s)is:(keep|reject|unrated)(?:\s|$)/.exec(this.filters.q || '');
+      return match ? match[1] : '';
+    },
     selectedPathList() {
       const list = this.assets.filter((asset) => this.selectedPathSetHas(asset.path)).map((asset) => asset.path);
       return list.length ? list : this.selectedPath ? [this.selectedPath] : [];
@@ -84,6 +106,14 @@ export const AssetsView = {
     window.removeEventListener('asset-viewer:open-review', this.onOpenReviewRequest);
   },
   methods: {
+    setNsfwFilter(token) {
+      const rest = String(this.filters.q || '')
+        .replace(/(^|\s)-?is:(nsfw|sfw|safe|questionable|unscanned)(?=\s|$)/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      this.filters.similarTo = '';
+      this.filters.q = [rest, token].filter(Boolean).join(' ');
+    },
     onCardDragStart(asset, event) {
       // Dragging a selected card carries the whole selection; otherwise just that card.
       const paths =
@@ -551,17 +581,54 @@ export const AssetsView = {
                             <label>Order <select id="sortDirSelect" v-model="filters.sortDir" class="select"><option value="asc">Ascending</option><option value="desc">Descending</option></select></label>
                             <label>Density <select v-model="filters.density" class="select"><option value="compact">Compact</option><option value="comfortable">Comfortable</option><option value="large">Large</option></select></label>
                             <label><input type="checkbox" :checked="blurThumbnails" @change="toggleBlurThumbnails" /> Blur</label>
+                            <details v-if="library" class="action-menu nsfw-menu" @toggle="$event.target.open && library.fetchNsfwStatus()"><summary title="NSFW detection and blur">NSFW</summary><div class="action-menu-panel nsfw-panel">
+                                <label class="nsfw-row"><input type="checkbox" :checked="library.nsfw.settings.nsfw_blur" @change="library.updateNsfwSettings({ nsfw_blur: $event.target.checked })" /> Blur NSFW only</label>
+                                <label class="nsfw-row">Blur <select class="select" :value="library.nsfw.settings.nsfw_blur_style" @change="library.updateNsfwSettings({ nsfw_blur_style: $event.target.value })"><option value="regions">detected regions</option><option value="image">whole image</option></select></label>
+                                <label class="nsfw-row">Preset <select class="select" :value="library.nsfw.settings.nsfw_preset" @change="library.updateNsfwSettings({ nsfw_preset: $event.target.value })"><option value="cautious">Cautious</option><option value="balanced">Balanced</option><option value="strict">Strict (nudity only)</option><option value="custom">Custom</option></select></label>
+                                <label class="nsfw-row nsfw-slider">Sensitivity <input type="range" min="0" max="100" step="1" :value="library.nsfw.settings.nsfw_sensitivity" @change="library.updateNsfwSettings({ nsfw_preset: 'custom', nsfw_sensitivity: Number($event.target.value) })" /> <output>{{ library.nsfw.settings.nsfw_sensitivity }}</output></label>
+                                <label class="nsfw-row"><input type="checkbox" :checked="library.nsfw.settings.nsfw_see_through" @change="library.updateNsfwSettings({ nsfw_preset: 'custom', nsfw_see_through: $event.target.checked })" /> See-through counts as NSFW</label>
+                                <div class="nsfw-filters">
+                                    <button type="button" :aria-pressed="nsfwFilter === 'is:nsfw'" @click="setNsfwFilter('is:nsfw')">Show NSFW</button>
+                                    <button type="button" :aria-pressed="nsfwFilter === 'is:sfw'" @click="setNsfwFilter('is:sfw')">Show safe</button>
+                                    <button type="button" :aria-pressed="nsfwFilter === '-is:nsfw'" @click="setNsfwFilter('-is:nsfw')">Hide NSFW</button>
+                                    <button v-if="nsfwFilter" type="button" @click="setNsfwFilter('')">Any rating</button>
+                                </div>
+                                <div class="nsfw-scan" role="status">
+                                    <template v-if="library.nsfw.task && library.nsfw.task.status === 'running'">
+                                        <progress :max="library.nsfw.task.total || 1" :value="library.nsfw.task.done"></progress>
+                                        <span>Scanning {{ library.nsfw.task.done }} / {{ library.nsfw.task.total }}…</span>
+                                        <button type="button" @click="library.nsfwScan('cancel')">Cancel scan</button>
+                                    </template>
+                                    <template v-else>
+                                        <span>{{ library.nsfw.pending ? library.nsfw.pending + ' images not rated yet (no save-time rating).' : 'Every image here has a rating.' }}</span>
+                                        <button v-if="library.nsfw.pending" type="button" :disabled="!nsfwModelsReady" :title="nsfwModelsReady ? 'Analyse unrated images in the background (about half a second each)' : 'NSFW models or onnxruntime missing'" @click="library.nsfwScan('start')">Scan {{ library.nsfw.pending }} images</button>
+                                        <span v-if="library.nsfw.models && !nsfwModelsReady" class="nsfw-warn">{{ library.nsfw.models.onnxruntime ? 'Put 640m.onnx in ' + library.nsfw.models.model_dir : 'Install onnxruntime to scan.' }}</span>
+                                    </template>
+                                </div>
+                            </div></details>
+                            <details v-if="library" class="action-menu cull-menu"><summary title="Cull: press 1 to keep, 2 to reject; it advances to the next image">Cull</summary><div class="action-menu-panel">
+                                <p class="action-menu-hint">Press <kbd>1</kbd> keep · <kbd>2</kbd> reject (again to clear). Works in the slideshow too.</p>
+                                <p class="action-menu-hint">Loaded: {{ cullCounts.keep }} keep · {{ cullCounts.reject }} reject · {{ cullCounts.unrated }} unrated</p>
+                                <button type="button" :aria-pressed="ratingFilter === 'unrated'" @click="library.setRatingFilter('unrated')">Show unrated</button>
+                                <button type="button" :aria-pressed="ratingFilter === 'keep'" @click="library.setRatingFilter('keep')">Show keepers</button>
+                                <button type="button" :aria-pressed="ratingFilter === 'reject'" @click="library.setRatingFilter('reject')">Show rejects</button>
+                                <button v-if="ratingFilter" type="button" @click="library.setRatingFilter('')">Show all ratings</button>
+                                <button type="button" class="action-menu-danger" :disabled="library.cullBusy || isDeleting" title="Move every rejected image in this folder to the viewer trash (Undo available)" @click="library.trashAllRejects()">Trash all rejects…</button>
+                            </div></details>
                         </div>
                         <div v-if="deleteCount" class="selection-bar" aria-label="Selection actions">
                             <strong>{{ deleteCount }} selected</strong>
                             <button v-if="selectedCount > 1" class="button button--compact" type="button" :disabled="!canCompareSelection" title="Select exactly two previewable images" @click="openCompareSelection">Compare</button>
                             <details class="action-menu"><summary>Move</summary><div class="action-menu-panel"><label for="moveDestination">Destination folder</label><select id="moveDestination" v-model="moveDestination" class="select"><option v-for="folder in folderTree" :key="folder.path" :value="folder.path">{{ folder.path || 'root' }}</option></select><button type="button" @click="moveSelectedAssets(moveDestination)">Move selected</button></div></details>
                             <button class="button button--compact" type="button" @click="toggleFavorite()">★ Favorite</button>
+                            <button v-if="library" class="button button--compact" type="button" title="Mark selected as keepers" @click="library.rate(selectedPathList, 'keep')">✓ Keep</button>
+                            <button v-if="library" class="button button--compact" type="button" title="Mark selected as rejects" @click="library.rate(selectedPathList, 'reject')">✕ Reject</button>
                             <details v-if="library" class="action-menu"><summary>Collection</summary><div class="action-menu-panel">
                                 <button v-for="collection in library.collections" :key="collection.id" type="button" @click="addSelectionToCollection(collection, $event)">Add to {{ collection.name }}</button>
                                 <button type="button" @click="addSelectionToCollection(null, $event)">New collection from selection…</button>
                                 <button v-if="activeCollection" type="button" @click="library.removeFromCollection(activeCollection, selectedPathList)">Remove from {{ activeCollection.name }}</button>
                             </div></details>
+                            <button class="button button--compact" type="button" title="Send the selection to Discord or Immich (Bubba Nodes destinations)" @click="$refs.sendDialog.open(selectedPathList)">Send to…</button>
                             <button class="button button--compact" type="button" @click="copySelectedPaths">Copy paths</button>
                             <details class="action-menu"><summary>Export</summary><div class="action-menu-panel"><button type="button" @click="exportSelectedAssets('json')">Export JSON</button><button type="button" @click="exportSelectedAssets('csv')">Export CSV</button></div></details>
                             <button class="button button--compact button--danger" type="button" :disabled="isDeleting" title="Move selected media to trash. Shift-click permanently deletes without confirmation." @click="requestDeleteSelected">Delete</button>
@@ -665,7 +732,11 @@ export const AssetsView = {
                 @toggle-favorite="toggleFavorite"
                 @filter-by="(query) => library ? library.applySearch(query) : (filters.q = query)"
                 @resize-preview="startPreviewResize"
+                @open-sweep="(asset) => $refs.sweepGrid.open(asset.path)"
+                @send-to="(asset) => $refs.sendDialog.open([asset.path])"
             />
+            <SendDialog ref="sendDialog" />
+            <SweepGrid ref="sweepGrid" :blur="(cell) => (library ? Boolean(library.blurFor(cell)) : blurThumbnails)" @select="selectAsset" />
         </div>
     `
 };

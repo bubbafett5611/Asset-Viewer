@@ -206,10 +206,10 @@ export function useAssets(options) {
     isDeleteConfirmVisible.value = false;
   }
 
-  async function confirmDelete({ safeDeleteOverride = null, skipConfirm = false } = {}) {
-    const paths = Array.from(selectedPaths.value.size ? selectedPaths.value : new Set([selectedPath.value])).filter(
-      Boolean
-    );
+  async function confirmDelete({ safeDeleteOverride = null, skipConfirm = false, paths: explicitPaths = null } = {}) {
+    const paths = (
+      explicitPaths || Array.from(selectedPaths.value.size ? selectedPaths.value : new Set([selectedPath.value]))
+    ).filter(Boolean);
     if (!paths.length) {
       return;
     }

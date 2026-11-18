@@ -18,6 +18,7 @@ def create_app() -> Flask:
 
     from blueprints.assets import assets_bp
     from blueprints.duplicates import duplicates_bp
+    from blueprints.library import library_bp
     from blueprints.settings import settings_bp
     from blueprints.tags import tags_bp
     from blueprints.ui import ui_bp
@@ -28,6 +29,7 @@ def create_app() -> Flask:
     app.register_blueprint(settings_bp)
     app.register_blueprint(assets_bp)
     app.register_blueprint(duplicates_bp)
+    app.register_blueprint(library_bp)
     app.register_blueprint(updates_bp)
     return app
 

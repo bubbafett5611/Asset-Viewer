@@ -42,7 +42,8 @@ export function useKeyboardShortcuts(options) {
     duplicateStatusText,
     deleteCount,
     requestDeleteSelected,
-    toggleFavorite
+    toggleFavorite,
+    rateSelection
   } = options;
 
   function onDocumentKeydown(event) {
@@ -204,6 +205,20 @@ export function useKeyboardShortcuts(options) {
     if (key === 'f' && !isCommandKey && isMediaTab && hasPathSelection && toggleFavorite) {
       event.preventDefault();
       toggleFavorite();
+      return;
+    }
+
+    // Cull mode: 1 = keep, 2 = reject (pressing the same key again clears it), then advance.
+    if (
+      (key === '1' || key === '2') &&
+      !isCommandKey &&
+      !event.altKey &&
+      isMediaTab &&
+      hasPathSelection &&
+      rateSelection
+    ) {
+      event.preventDefault();
+      rateSelection(key === '1' ? 'keep' : 'reject');
       return;
     }
 

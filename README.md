@@ -154,6 +154,33 @@ From here you can:
 
 Deletion defaults to safe delete, which moves files to `.asset_viewer_trash` inside the asset root. Permanent delete is available through the permanent-delete shortcut or Shift-click delete actions.
 
+#### Copy for ComfyUI, A1111 and LoRA stacks
+
+The inspector's **Metadata actions** menu copies the full ComfyUI workflow (paste it onto the ComfyUI canvas to load the graph), an A1111-style `parameters` block, or the LoRAs as `<lora:name:weight>` tags. When model and CLIP strengths differ the tag is `<lora:name:te:unet>`.
+
+#### Cull mode
+
+Press `1` to keep or `2` to reject the selected image; it moves on to the next one. Pressing the same key again clears the rating. The keys also work in the slideshow, and with several images selected they rate the whole selection. Ratings follow files when they are moved or restored. Search with `is:keep`, `is:reject` or `is:unrated` (or `-is:reject`), or use the **Cull** menu. **Trash all rejects…** moves every reject in the current folder to the viewer trash, with Undo.
+
+#### XY sweeps
+
+Images from Bubba Nodes' XY Sweep show **▦ Sweep grid** in the inspector. It opens the cells as a labelled X×Y grid; click a cell to inspect it. New sweeps are grouped by the `sweep_id` Bubba Nodes writes. Older images are grouped by their `XY sweep …` notes and save time.
+
+#### Send to Discord or Immich
+
+**Send to…** (selection bar or inspector) uses the Discord webhook profiles and Immich server saved by Bubba Nodes. Set **Settings > Integrations > ComfyUI user folder** (the folder that contains `bubba_nodes/`). The dialog names the destination and file count, and nothing is sent until you press its Send button. Webhook URLs and API keys never reach the browser.
+
+#### NSFW detection and blur
+
+New images saved by Bubba Save Image carry a content rating, score and detected regions in their Bubba metadata. NudeNet's exposed-vs-covered classes decide, a WD tagger votes, and the breast/nipple YOLO models only add blur locations. For older images, open the **NSFW** menu and choose **Scan N images**. This runs the same NudeNet + WD models in the background (about half a second per image on CPU) and caches the results in the index. It needs `pip install -r requirements-nsfw.txt` and the models in `%APPDATA%\Bubba Media Viewer\models\nsfw` (`640m.onnx`, `wd-vit-tagger-v3.onnx`, `selected_tags.csv`).
+
+The **NSFW** menu sets:
+
+- **Blur NSFW only**, and whether to blur detected regions or the whole image. The **Blur** checkbox (`B`) still blurs everything.
+- A preset: Cautious, Balanced or Strict (nudity only). The sensitivity slider and **See-through counts as NSFW** switch make it Custom.
+
+Stored evidence is re-judged whenever these change, so no rescan is needed. Search with `is:nsfw`, `is:sfw`, `is:questionable`, `is:unscanned`, or `-is:nsfw` to hide NSFW. Hover a card, or use **Reveal** in the inspector or `V` in the slideshow, to see blurred content.
+
 ### Tag Browser
 
 The Tag Browser is a companion panel for prompt and label work. Search for a tag or alias, inspect the selected tag on the right, copy it, favorite it, or jump to an external search.
@@ -261,6 +288,7 @@ On macOS, browser-level `Cmd` is treated like `Ctrl` for command shortcuts where
 | `Ctrl+O` | Open selected media full-size |
 | `Ctrl+Shift+O` | Open containing folder |
 | `B` | Toggle thumbnail blur |
+| `1` / `2` | Keep / reject (cull) and advance; again to clear |
 | `Delete` | Delete selected media |
 | `Shift+Delete` | Permanently delete selected media |
 

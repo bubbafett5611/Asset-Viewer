@@ -44,8 +44,11 @@ from asset_viewer import (
 from flask import Response, abort, jsonify, request, send_file, stream_with_context
 
 from services.app_context import _get_asset_roots_snapshot, logger
+from services.nsfw_settings import current_nsfw_options
 from services.asset_index import (
     asset_facets,
+    get_asset_rating,
+    nsfw_for_path,
     create_collection,
     delete_collection,
     list_collections,
@@ -548,6 +551,12 @@ def api_assets_details_handler():
         item = build_asset_item(abs_path, root.path, include_metadata=True)
         if is_asset_favorite(root.path, abs_path):
             item['favorite'] = True
+        rating = get_asset_rating(root.path, abs_path)
+        if rating:
+            item['rating'] = rating
+        nsfw = nsfw_for_path(root.path, abs_path, item.get('metadata') or {}, current_nsfw_options())
+        if nsfw:
+            item['nsfw'] = nsfw
     except Exception as e:
         abort(400, str(e))
     return jsonify({'asset': item})

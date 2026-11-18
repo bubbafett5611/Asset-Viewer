@@ -11,6 +11,7 @@ from typing import Any, Callable
 from runtime_paths import asset_index_cache_file
 from services.asset_query import build_facets, generation_fields, parse_query, row_matches
 from services.asset_viewer_scanning import _flatten_to_search_text
+from services.nsfw_detect import classify, resolve_options
 
 
 INDEX_SCHEMA_VERSION = "1"
@@ -85,6 +86,28 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
             path TEXT PRIMARY KEY,
             root TEXT NOT NULL,
             added_at REAL NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ratings (
+            path TEXT PRIMARY KEY,
+            root TEXT NOT NULL,
+            rating TEXT NOT NULL,
+            rated_at REAL NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS nsfw_scans (
+            path TEXT PRIMARY KEY,
+            root TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            modified_ts REAL NOT NULL,
+            evidence_json TEXT NOT NULL,
+            analyzed_at REAL NOT NULL
         )
         """
     )
@@ -369,6 +392,7 @@ def list_indexed_assets(
     favorites_only: bool = False,
     collection_id: int | None = None,
     similar_to: str = "",
+    nsfw_options: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]] | None:
     normalized_root = os.path.abspath(root)
     db_path = asset_index_cache_file(normalized_root)
@@ -377,6 +401,11 @@ def list_indexed_assets(
     parsed_query = parse_query(query) if search_in_metadata else None
     if parsed_query is not None and parsed_query.favorites_only:
         favorites_only = True
+    rating_filter = parsed_query.rating_filter if parsed_query is not None else set()
+    rating_exclude = parsed_query.rating_exclude if parsed_query is not None else set()
+    nsfw_filter = parsed_query.nsfw_filter if parsed_query is not None else set()
+    nsfw_exclude = parsed_query.nsfw_exclude if parsed_query is not None else set()
+    nsfw_settings = nsfw_options or resolve_options()
 
     request_state = _normalize_request(
         extensions,
@@ -405,6 +434,16 @@ def list_indexed_assets(
                 str(fav["path"])
                 for fav in connection.execute("SELECT path FROM favorites WHERE root = ?", (normalized_root,))
             }
+            ratings = {
+                str(item["path"]): str(item["rating"])
+                for item in connection.execute("SELECT path, rating FROM ratings WHERE root = ?", (normalized_root,))
+            }
+            nsfw_scans = {
+                str(item["path"]): item
+                for item in connection.execute(
+                    "SELECT path, size_bytes, modified_ts, evidence_json FROM nsfw_scans WHERE root = ?", (normalized_root,)
+                )
+            }
             collection_paths: set[str] | None = None
             if collection_id is not None:
                 collection_paths = {
@@ -426,6 +465,12 @@ def list_indexed_assets(
         if favorites_only and not is_favorite:
             continue
         if collection_paths is not None and str(row["path"]) not in collection_paths:
+            continue
+        rating = ratings.get(str(row["path"]))
+        rating_key = rating or "unrated"
+        if rating_filter and rating_key not in rating_filter:
+            continue
+        if rating_key in rating_exclude:
             continue
         if similarity is not None and str(row["path"]) not in similarity:
             continue
@@ -461,6 +506,12 @@ def list_indexed_assets(
         metadata_summary = _json_loads(row["metadata_json"], {})
         if not _metadata_mode_matches(request_state["requested_metadata_mode"], runtime, extension, metadata_summary):
             continue
+        nsfw = nsfw_for_row(dict(row), metadata_summary, nsfw_scans.get(str(row["path"])), nsfw_settings)
+        nsfw_key = nsfw["rating"] if nsfw else "unscanned"
+        if nsfw_filter and nsfw_key not in nsfw_filter:
+            continue
+        if nsfw_key in nsfw_exclude:
+            continue
 
         metadata_badges = _json_loads(row["metadata_badges_json"], [])
         badge_keys = {badge.get("key") for badge in metadata_badges if isinstance(badge, dict)}
@@ -475,6 +526,10 @@ def list_indexed_assets(
         item = _item_from_row(row, include_metadata=include_metadata)
         if is_favorite:
             item["favorite"] = True
+        if rating:
+            item["rating"] = rating
+        if nsfw:
+            item["nsfw"] = nsfw
         if similarity is not None:
             # 64-bit dHash: 0 bits apart = identical; express as a 0-100 similarity score.
             item["similarity"] = round(100 * (1 - similarity[str(row["path"])] / 64))
@@ -616,8 +671,143 @@ def is_asset_favorite(root: str, path: str) -> bool:
         return False
 
 
+RATING_VALUES = {"keep", "reject"}
+NSFW_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
+
+
+def nsfw_evidence(metadata_summary: dict[str, Any], scan_row: Any, size_bytes: int, modified_ts: float) -> tuple[list[dict[str, Any]], str] | None:
+    """(regions, source) for an image: save-time Bubba metadata first, then a still-fresh viewer scan."""
+    embedded = (metadata_summary or {}).get("metadata")
+    bubba = embedded.get("bubba_metadata") if isinstance(embedded, dict) else None
+    if isinstance(bubba, dict) and bubba.get("content_rating"):
+        return list(bubba.get("nsfw_regions") or []), "metadata"
+    if scan_row is not None and (int(scan_row["size_bytes"]), float(scan_row["modified_ts"])) == (int(size_bytes), float(modified_ts)):
+        return _json_loads(scan_row["evidence_json"], []), "scan"
+    return None
+
+
+def nsfw_for_row(row: dict[str, Any], metadata_summary: dict[str, Any], scan_row: Any, options: dict[str, Any]) -> dict[str, Any] | None:
+    """Rating + blur regions for an image row under the current sensitivity; None when not analysed yet."""
+    if str(row.get("extension") or "").lower() not in NSFW_IMAGE_EXTENSIONS:
+        return None
+    evidence = nsfw_evidence(metadata_summary, scan_row, int(row["size_bytes"]), float(row["modified_ts"]))
+    if evidence is None:
+        return None
+    regions, source = evidence
+    result = classify(regions, **options)
+    return {"rating": result["rating"], "score": result["score"], "regions": result["regions"], "source": source}
+
+
+def nsfw_for_path(root: str, path: str, metadata_summary: dict[str, Any], options: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    normalized_root = os.path.abspath(root)
+    abs_path = os.path.abspath(path)
+    try:
+        stat = os.stat(abs_path)
+    except OSError:
+        return None
+    scan_row = None
+    if asset_index_cache_file(normalized_root).exists():
+        try:
+            with _connect(normalized_root) as connection:
+                _ensure_schema(connection)
+                scan_row = connection.execute(
+                    "SELECT size_bytes, modified_ts, evidence_json FROM nsfw_scans WHERE path = ?", (abs_path,)
+                ).fetchone()
+        except sqlite3.Error:
+            scan_row = None
+    row = {"extension": Path(abs_path).suffix.lower(), "size_bytes": stat.st_size, "modified_ts": stat.st_mtime}
+    return nsfw_for_row(row, metadata_summary, scan_row, options or resolve_options())
+
+
+def pending_nsfw_scans(root: str) -> list[dict[str, Any]]:
+    """Images with neither save-time evidence nor a fresh viewer scan, newest first."""
+    normalized_root = os.path.abspath(root)
+    if not asset_index_cache_file(normalized_root).exists():
+        return []
+    with _connect(normalized_root) as connection:
+        _ensure_schema(connection)
+        rows = connection.execute(
+            "SELECT path, extension, size_bytes, modified_ts, metadata_json FROM assets WHERE root = ?", (normalized_root,)
+        ).fetchall()
+        scans = {
+            str(item["path"]): item
+            for item in connection.execute(
+                "SELECT path, size_bytes, modified_ts, evidence_json FROM nsfw_scans WHERE root = ?", (normalized_root,)
+            )
+        }
+    pending = []
+    for row in rows:
+        if str(row["extension"] or "").lower() not in NSFW_IMAGE_EXTENSIONS:
+            continue
+        evidence = nsfw_evidence(
+            _json_loads(row["metadata_json"], {}), scans.get(str(row["path"])), row["size_bytes"], row["modified_ts"]
+        )
+        if evidence is None:
+            pending.append({"path": str(row["path"]), "size_bytes": int(row["size_bytes"]), "modified_ts": float(row["modified_ts"])})
+    pending.sort(key=lambda item: item["modified_ts"], reverse=True)
+    return pending
+
+
+def save_nsfw_scans(root: str, results: list[dict[str, Any]]) -> None:
+    """Persist viewer scan evidence; each result needs path, size_bytes, modified_ts and regions."""
+    if not results:
+        return
+    normalized_root = os.path.abspath(root)
+    now = time.time()
+    with _connect(normalized_root) as connection:
+        _ensure_schema(connection)
+        connection.executemany(
+            "INSERT OR REPLACE INTO nsfw_scans(path, root, size_bytes, modified_ts, evidence_json, analyzed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    os.path.abspath(item["path"]),
+                    normalized_root,
+                    int(item["size_bytes"]),
+                    float(item["modified_ts"]),
+                    _json_dumps(item["regions"]),
+                    now,
+                )
+                for item in results
+            ],
+        )
+        connection.commit()
+
+
+def set_asset_ratings(root: str, paths: list[str], rating: str | None) -> None:
+    """Mark files keep/reject for cull mode; None clears the rating."""
+    if rating is not None and rating not in RATING_VALUES:
+        raise ValueError("Rating must be keep, reject or empty.")
+    normalized_root = os.path.abspath(root)
+    abs_paths = [os.path.abspath(path) for path in paths]
+    with _connect(normalized_root) as connection:
+        _ensure_schema(connection)
+        if rating:
+            now = time.time()
+            connection.executemany(
+                "INSERT OR REPLACE INTO ratings(path, root, rating, rated_at) VALUES (?, ?, ?, ?)",
+                [(path, normalized_root, rating, now) for path in abs_paths],
+            )
+        else:
+            connection.executemany("DELETE FROM ratings WHERE path = ?", [(path,) for path in abs_paths])
+        connection.commit()
+
+
+def get_asset_rating(root: str, path: str) -> str | None:
+    normalized_root = os.path.abspath(root)
+    if not asset_index_cache_file(normalized_root).exists():
+        return None
+    try:
+        with _connect(normalized_root) as connection:
+            _ensure_schema(connection)
+            row = connection.execute("SELECT rating FROM ratings WHERE path = ?", (os.path.abspath(path),)).fetchone()
+            return str(row["rating"]) if row else None
+    except sqlite3.Error:
+        return None
+
+
 def move_asset_favorite(root: str, old_path: str, new_path: str) -> None:
-    """Keep favorites and collection membership attached to a file after it is moved or restored."""
+    """Keep favorites, cull ratings and collection membership attached to a file after it is moved or restored."""
     normalized_root = os.path.abspath(root)
     if not asset_index_cache_file(normalized_root).exists():
         return
@@ -629,6 +819,14 @@ def move_asset_favorite(root: str, old_path: str, new_path: str) -> None:
         )
         connection.execute(
             "UPDATE OR REPLACE collection_items SET path = ? WHERE path = ?",
+            (os.path.abspath(new_path), os.path.abspath(old_path)),
+        )
+        connection.execute(
+            "UPDATE OR REPLACE ratings SET path = ? WHERE path = ?",
+            (os.path.abspath(new_path), os.path.abspath(old_path)),
+        )
+        connection.execute(
+            "UPDATE OR REPLACE nsfw_scans SET path = ? WHERE path = ?",
             (os.path.abspath(new_path), os.path.abspath(old_path)),
         )
         connection.commit()
@@ -834,6 +1032,34 @@ def delete_collection(root: str, collection_id: int) -> None:
         connection.execute("DELETE FROM collection_items WHERE collection_id = ?", (int(collection_id),))
         connection.execute("DELETE FROM collections WHERE id = ?", (int(collection_id),))
         connection.commit()
+
+
+def indexed_rows_with_metadata(root: str, like: str = "") -> list[dict[str, Any]]:
+    """Indexed rows with parsed metadata summaries; `like` pre-filters on search text (lower-case substring)."""
+    normalized_root = os.path.abspath(root)
+    if not asset_index_cache_file(normalized_root).exists():
+        return []
+    sql = "SELECT path, name, relative_path, modified_ts, metadata_json FROM assets WHERE root = ?"
+    params: list[Any] = [normalized_root]
+    if like:
+        sql += " AND instr(search_text, ?) > 0"
+        params.append(like.lower())
+    try:
+        with _connect(normalized_root) as connection:
+            _ensure_schema(connection)
+            rows = connection.execute(sql, params).fetchall()
+    except sqlite3.Error:
+        return []
+    return [
+        {
+            "path": row["path"],
+            "name": row["name"],
+            "relative_path": row["relative_path"],
+            "modified_ts": float(row["modified_ts"]),
+            "metadata": _json_loads(row["metadata_json"], {}),
+        }
+        for row in rows
+    ]
 
 
 def asset_facets(root: str, folder: str = "") -> dict[str, Any] | None:

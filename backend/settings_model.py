@@ -34,6 +34,18 @@ class Density(StrEnum):
 	large = "large"
 
 
+class NsfwPreset(StrEnum):
+	cautious = "cautious"
+	balanced = "balanced"
+	strict = "strict"
+	custom = "custom"
+
+
+class NsfwBlurStyle(StrEnum):
+	regions = "regions"
+	image = "image"
+
+
 class GeneralSettings(BaseModel):
 	asset_roots: list[str] = Field(default_factory=list, description="Folders scanned by the media viewer.")
 
@@ -41,6 +53,30 @@ class GeneralSettings(BaseModel):
 class ViewerSettings(BaseModel):
 	density: Density = Field(default=Density.comfortable, description="Default media card density.")
 	preview: bool = Field(default=False, title="Blur All", description="Blur all media thumbnails.")
+	nsfw_blur: bool = Field(
+		default=True, title="Blur NSFW only", description="Blur images rated NSFW (when Blur All is off)."
+	)
+	nsfw_blur_style: NsfwBlurStyle = Field(
+		default=NsfwBlurStyle.regions,
+		title="NSFW blur style",
+		description="Blur only the detected regions, or the whole image.",
+	)
+	nsfw_preset: NsfwPreset = Field(
+		default=NsfwPreset.strict,
+		title="NSFW preset",
+		description="Cautious blurs the most; Strict only nudity. Custom keeps your slider and switch.",
+	)
+	nsfw_sensitivity: int = Field(
+		default=33, ge=0, le=100, title="NSFW sensitivity", description="0 = least sensitive, 100 = most."
+	)
+	nsfw_see_through: bool = Field(
+		default=False, title="See-through counts as NSFW", description="Treat see-through clothing as NSFW."
+	)
+	nsfw_model_dir: str = Field(
+		default="",
+		title="NSFW model folder",
+		description="Folder with 640m.onnx (+ wd-vit-tagger-v3.onnx). Empty = %APPDATA%\\Bubba Media Viewer\\models\\nsfw.",
+	)
 
 
 class UpdateSettings(BaseModel):
@@ -56,6 +92,14 @@ class IntegrationSettings(BaseModel):
 		default="http://127.0.0.1:8188",
 		title="ComfyUI URL",
 		description="Where Re-queue in ComfyUI sends workflows (the address ComfyUI is listening on).",
+	)
+	comfyui_user_dir: str = Field(
+		default="",
+		title="ComfyUI user folder",
+		description=(
+			"ComfyUI's user folder (contains bubba_nodes/). Send to… reuses the Discord webhook profiles and "
+			"Immich settings saved there by Bubba Nodes, e.g. C:\\StabilityMatrix\\Data\\Packages\\ComfyUI\\user."
+		),
 	)
 
 

@@ -10,6 +10,8 @@ Supported syntax (case-insensitive, AND-combined):
     size>2mb  size<500kb   file size bounds (b, kb, mb, gb)
     after:2026-11-01  before:2026-11-18  on:2026-11-12   local dates (also today / yesterday)
     is:fav                 favorites only
+    is:keep  is:reject  is:unrated   cull ratings (-is:reject hides rejects)
+    is:nsfw  is:sfw  is:questionable  is:unscanned   content rating (-is:nsfw hides NSFW)
 """
 
 from __future__ import annotations
@@ -49,6 +51,8 @@ MODEL_KEYS = ("model_name", "model", "ckpt_name", "checkpoint", "checkpoint_name
 SIZE_PATTERN = re.compile(r"^size(<=|>=|<|>)(\d+(?:\.\d+)?)(b|kb|mb|gb)?$")
 SIZE_UNITS = {"b": 1, "kb": 1024, "mb": 1024**2, "gb": 1024**3, None: 1}
 DATE_FIELDS = {"after", "before", "on", "since", "until"}
+NSFW_ALIASES = {"nsfw": "nsfw", "sfw": "sfw", "safe": "sfw", "questionable": "questionable", "unscanned": "unscanned"}
+RATING_ALIASES = {"keep": "keep", "kept": "keep", "keeper": "keep", "reject": "reject", "rejected": "reject", "unrated": "unrated"}
 
 
 @dataclass
@@ -62,6 +66,10 @@ class ParsedQuery:
     after_ts: float | None = None
     before_ts: float | None = None
     favorites_only: bool = False
+    rating_filter: set[str] = field(default_factory=set)
+    rating_exclude: set[str] = field(default_factory=set)
+    nsfw_filter: set[str] = field(default_factory=set)
+    nsfw_exclude: set[str] = field(default_factory=set)
 
     @property
     def needs_generation(self) -> bool:
@@ -80,6 +88,10 @@ class ParsedQuery:
             or self.after_ts is not None
             or self.before_ts is not None
             or self.favorites_only
+            or self.rating_filter
+            or self.rating_exclude
+            or self.nsfw_filter
+            or self.nsfw_exclude
         )
 
 
@@ -137,6 +149,12 @@ def parse_query(query: str) -> ParsedQuery:
             value = value.strip()
             if key == "is" and value.lower() in {"fav", "favorite", "favorites", "starred"} and not negate:
                 parsed.favorites_only = True
+                continue
+            if key == "is" and value.lower() in RATING_ALIASES:
+                (parsed.rating_exclude if negate else parsed.rating_filter).add(RATING_ALIASES[value.lower()])
+                continue
+            if key == "is" and value.lower() in NSFW_ALIASES:
+                (parsed.nsfw_exclude if negate else parsed.nsfw_filter).add(NSFW_ALIASES[value.lower()])
                 continue
             if key in DATE_FIELDS and not negate:
                 day = _parse_day(value)

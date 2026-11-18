@@ -1,8 +1,12 @@
 import { formatBytes, formatDate } from '/vue/formatters.js';
+import { inject } from '/vendor/vue.esm-browser.prod.js';
 import { fileUrl, thumbUrl } from '/vue/api.js';
+import { NsfwOverlay } from '/vue/components/NsfwOverlay.js';
+import { LIBRARY_KEY } from '/vue/composables/useLibraryExtras.js';
 
 export const AssetCard = {
   name: 'AssetCard',
+  components: { NsfwOverlay },
   props: {
     multiSelecting: Boolean,
     asset: {
@@ -28,6 +32,9 @@ export const AssetCard = {
   },
   emits: ['select', 'open', 'favorite', 'drag-start', 'drag-end'],
   setup() {
+    const library = inject(LIBRARY_KEY, null);
+    const blurState = (asset, blurEnabled) =>
+      library ? library.blurFor(asset) : blurEnabled ? { mode: 'image' } : null;
     const previewableExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tif', '.tiff']);
     const videoExtensions = new Set(['.mp4']);
     const isPreviewable = (asset) => previewableExtensions.has(String(asset?.extension || '').toLowerCase());
@@ -62,6 +69,7 @@ export const AssetCard = {
     };
 
     return {
+      blurState,
       thumbUrl,
       fileUrl,
       formatBytes,
@@ -76,13 +84,13 @@ export const AssetCard = {
     };
   },
   template: `
-        <div class="asset-card-shell" :class="{ 'is-favorite': asset.favorite }" :data-modified="asset.modified_ts">
+        <div class="asset-card-shell" :class="{ 'is-favorite': asset.favorite, 'is-kept': asset.rating === 'keep', 'is-rejected': asset.rating === 'reject' }" :data-modified="asset.modified_ts">
         <button
             class="asset-card"
             draggable="true"
             @dragstart="$emit('drag-start', asset, $event)"
             @dragend="$emit('drag-end', asset, $event)"
-            :class="{ active, 'is-selected': selected, 'is-blurred': blurEnabled }"
+            :class="{ active, 'is-selected': selected, 'is-blurred': blurState(asset, blurEnabled)?.mode === 'image', 'is-nsfw': asset.nsfw && asset.nsfw.rating === 'nsfw' }"
             :aria-pressed="selected || (active && !multiSelecting)"
             type="button"
             :title="asset.name"
@@ -100,6 +108,7 @@ export const AssetCard = {
                     @load="markThumbLoaded"
                     @error="markThumbFailed"
                 />
+                <NsfwOverlay v-if="isPreviewable(asset) && blurState(asset, blurEnabled)?.mode === 'regions'" fit="cover" :regions="blurState(asset, blurEnabled).regions" />
                 <video
                     v-else-if="isVideo(asset)"
                     :src="fileUrl(asset.path)"
@@ -110,6 +119,7 @@ export const AssetCard = {
                     @loadeddata="markThumbLoaded"
                     @error="markThumbFailed"
                 ></video>
+                <span v-if="asset.rating" class="asset-rating-badge" :class="'asset-rating-badge--' + asset.rating" :title="asset.rating === 'keep' ? 'Kept (1)' : 'Rejected (2)'">{{ asset.rating === 'keep' ? '✓ Keep' : '✕ Reject' }}</span>
                 <span v-if="isVideo(asset)" class="asset-video-indicator" aria-hidden="true">&#9654;</span>
                 <span v-if="asset.similarity !== undefined" class="asset-top-marker asset-top-marker--similar" :title="asset.similarity + '% visually similar'">≈ {{ asset.similarity }}%</span>
                 <span v-else-if="dayLabel" class="asset-top-marker">{{ dayLabel }}</span>

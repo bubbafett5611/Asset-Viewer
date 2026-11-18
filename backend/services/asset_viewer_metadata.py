@@ -126,7 +126,28 @@ def coerce_bubba_metadata(value: Any) -> dict[str, Any]:
     normalized["denoise"] = _coerce_non_negative_float(payload.get("denoise"), max_value=1.0)
     normalized["loras"] = _coerce_loras(payload.get("loras"))
     normalized["lora_strengths"] = _coerce_lora_strengths(payload.get("lora_strengths"), len(normalized["loras"]))
+    _copy_optional_bubba_fields(payload, normalized)
     return normalized
+
+
+def _copy_optional_bubba_fields(payload: dict[str, Any], normalized: dict[str, Any]) -> None:
+    """XY sweep and content-rating fields written by newer bubba_nodes; only kept when present."""
+    sweep_id = _sanitize_text(payload.get("sweep_id", ""), max_len=64)
+    if sweep_id:
+        normalized["sweep_id"] = sweep_id
+        for key in ("sweep_x_labels", "sweep_y_labels"):
+            labels = payload.get(key)
+            normalized[key] = [_sanitize_text(item, max_len=200) for item in labels] if isinstance(labels, list) else []
+        try:
+            normalized["sweep_index"] = max(-1, int(payload.get("sweep_index", -1)))
+        except (TypeError, ValueError):
+            normalized["sweep_index"] = -1
+    rating = str(payload.get("content_rating") or "").strip().lower()
+    if rating in {"sfw", "questionable", "nsfw"}:
+        normalized["content_rating"] = rating
+        normalized["nsfw_score"] = _coerce_non_negative_float(payload.get("nsfw_score"), max_value=1.0)
+        regions = payload.get("nsfw_regions")
+        normalized["nsfw_regions"] = [region for region in regions if isinstance(region, dict)][:64] if isinstance(regions, list) else []
 
 
 def has_bubba_generation_metadata(metadata: Any) -> bool:

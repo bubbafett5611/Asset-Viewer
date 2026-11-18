@@ -151,7 +151,9 @@ def test_settings_api_loads_and_saves_nested_model(client, tmp_path, monkeypatch
     assert response.status_code == 200
     payload = response.get_json()
     assert payload["settings"]["general"]["asset_roots"] == ["C:/Assets"]
-    assert payload["settings"]["viewer"] == {"density": "large", "preview": True}
+    viewer = payload["settings"]["viewer"]
+    assert {key: viewer[key] for key in ("density", "preview")} == {"density": "large", "preview": True}
+    assert (viewer["nsfw_blur"], viewer["nsfw_preset"], viewer["nsfw_sensitivity"]) == (True, "strict", 33)
     assert "general" in payload["schema"]["properties"]
     assert "viewer" in payload["schema"]["properties"]
     assert payload["schema"]["properties"]["general"]["title"] == "General"

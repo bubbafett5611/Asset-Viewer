@@ -951,8 +951,10 @@ def list_indexed_assets(
 	favorites_only: bool = False,
 	collection_id: int | None = None,
 	similar_to: str = "",
+	nsfw_options: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]] | None:
 	from services.asset_index import list_indexed_assets as _list_indexed_assets
+	from services.nsfw_settings import current_nsfw_options
 
 	return _list_indexed_assets(
 		root=root,
@@ -975,6 +977,7 @@ def list_indexed_assets(
 		favorites_only=favorites_only,
 		collection_id=collection_id,
 		similar_to=similar_to,
+		nsfw_options=nsfw_options if nsfw_options is not None else current_nsfw_options(),
 	)
 
 

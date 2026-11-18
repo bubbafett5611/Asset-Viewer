@@ -959,7 +959,14 @@ export function useAssetViewerState() {
     listServerTime,
     refreshAssets,
     fetchFolders,
-    assetListRef
+    assetListRef,
+    details,
+    selectedAsset,
+    selectedPath,
+    selectedPaths,
+    stepSelectedAsset,
+    confirmDelete,
+    blurThumbnails
   });
 
   function onAssetListScrollWithAutoLoad() {
@@ -1160,7 +1167,8 @@ export function useAssetViewerState() {
     duplicateStatusText,
     deleteCount,
     requestDeleteSelected,
-    toggleFavorite
+    toggleFavorite,
+    rateSelection: library.rateSelection
   });
 
   function loadUpdateNoticeState() {

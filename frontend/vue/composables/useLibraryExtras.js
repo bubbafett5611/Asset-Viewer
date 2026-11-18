@@ -1,6 +1,7 @@
-import { onBeforeUnmount, provide, reactive, ref, watch } from '/vendor/vue.esm-browser.prod.js';
+import { markRaw, onBeforeUnmount, provide, reactive, ref, watch } from '/vendor/vue.esm-browser.prod.js';
 import { API, buildQuery } from '/vue/api.js';
 import { showToast } from '/vue/components/ToastHost.js';
+import { NsfwOverlay } from '/vue/components/NsfwOverlay.js';
 
 export const LIBRARY_KEY = 'bubba-library';
 const LIVE_POLL_MS = 5000;
@@ -37,7 +38,14 @@ export function useLibraryExtras({
   listServerTime,
   refreshAssets,
   fetchFolders,
-  assetListRef
+  assetListRef,
+  details = null,
+  selectedAsset = null,
+  selectedPath = null,
+  selectedPaths = null,
+  stepSelectedAsset = null,
+  confirmDelete = null,
+  blurThumbnails = null
 }) {
   const facets = ref(null);
   const collections = ref([]);
@@ -252,6 +260,203 @@ export function useLibraryExtras({
     }
   }
 
+  // ---- Cull mode (keep / reject) ----------------------------------------
+  const RATING_FILTER_PATTERN = /(^|\s)-?is:(keep|kept|keeper|reject|rejected|unrated)(?=\s|$)/gi;
+
+  function applyRatingLocally(paths, rating) {
+    const targets = new Set(paths);
+    for (const asset of assets.value) {
+      if (targets.has(asset.path)) asset.rating = rating || undefined;
+    }
+    if (details?.value && targets.has(details.value.path))
+      details.value = { ...details.value, rating: rating || undefined };
+    if (selectedAsset?.value && targets.has(selectedAsset.value.path)) {
+      selectedAsset.value = { ...selectedAsset.value, rating: rating || undefined };
+    }
+  }
+
+  function ratingOf(path) {
+    return assets.value.find((asset) => asset.path === path)?.rating || '';
+  }
+
+  /** Rate paths keep/reject (null clears). Optimistic; rolls back and toasts on failure. */
+  async function rate(paths, rating) {
+    const targets = (paths || []).filter(Boolean);
+    if (!targets.length) return false;
+    const previous = new Map(targets.map((path) => [path, ratingOf(path)]));
+    applyRatingLocally(targets, rating);
+    try {
+      await readJson(
+        await fetch(API.rating, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ paths: targets, rating: rating || null })
+        }),
+        'Rating update failed'
+      );
+      return true;
+    } catch (error) {
+      for (const [path, value] of previous) applyRatingLocally([path], value || null);
+      showToast({ message: error.message, tone: 'error' });
+      return false;
+    }
+  }
+
+  /** Keys 1/2 in the grid: rate the selection; a single image advances to the next one. */
+  async function rateSelection(rating) {
+    const multi = selectedPaths?.value?.size > 1;
+    const targets = multi ? Array.from(selectedPaths.value) : [selectedPath?.value].filter(Boolean);
+    if (!targets.length) return;
+    // Pressing the key that matches the current rating clears it.
+    const next = !multi && ratingOf(targets[0]) === rating ? null : rating;
+    const ok = await rate(targets, next);
+    if (!ok) return;
+    if (multi) {
+      showToast({ message: `Marked ${targets.length} as ${next || 'unrated'}.`, tone: 'success' });
+    } else if (next) {
+      stepSelectedAsset?.(1);
+    }
+  }
+
+  function setRatingFilter(value) {
+    const rest = String(filters.q || '')
+      .replace(RATING_FILTER_PATTERN, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    filters.similarTo = '';
+    filters.q = [rest, value ? `is:${value}` : ''].filter(Boolean).join(' ');
+    activeTab.value = 'assets';
+  }
+
+  const cullBusy = ref(false);
+  async function trashAllRejects() {
+    if (!filters.root || cullBusy.value || !confirmDelete) return;
+    cullBusy.value = true;
+    try {
+      const payload = await readJson(
+        await fetch(buildQuery(API.list, { root: filters.root, folder: filters.folder, q: 'is:reject', limit: 3000 })),
+        'Could not list rejects'
+      );
+      const paths = (payload.assets || []).map((asset) => asset.path);
+      const where = filters.folder ? `“${filters.folder}”` : 'this library';
+      if (!paths.length) {
+        showToast({ message: `No rejected media in ${where}.`, tone: 'info' });
+        return;
+      }
+      const noun = paths.length === 1 ? 'reject' : 'rejects';
+      if (!window.confirm(`Move ${paths.length} ${noun} in ${where} to the trash? You can undo this.`)) return;
+      await confirmDelete({ paths, safeDeleteOverride: true });
+    } catch (error) {
+      showToast({ message: error.message, tone: 'error' });
+    } finally {
+      cullBusy.value = false;
+    }
+  }
+
+  // ---- NSFW detection and blur ------------------------------------------
+  const nsfw = reactive({
+    settings: {
+      preview: false,
+      nsfw_blur: true,
+      nsfw_blur_style: 'regions',
+      nsfw_preset: 'strict',
+      nsfw_sensitivity: 33,
+      nsfw_see_through: false
+    },
+    presets: {},
+    models: null,
+    pending: 0,
+    task: null,
+    saving: false
+  });
+  let nsfwPollTimer = null;
+
+  async function fetchNsfwStatus() {
+    if (!filters.root) return;
+    try {
+      const payload = await readJson(
+        await fetch(buildQuery(API.nsfwStatus, { root: filters.root })),
+        'Could not load NSFW status'
+      );
+      Object.assign(nsfw.settings, payload.settings || {});
+      nsfw.presets = payload.presets || {};
+      nsfw.models = payload.models || null;
+      nsfw.pending = Number(payload.pending) || 0;
+      const wasRunning = nsfw.task?.status === 'running';
+      nsfw.task = payload.task || null;
+      if (nsfw.task?.status === 'running') {
+        clearTimeout(nsfwPollTimer);
+        nsfwPollTimer = setTimeout(fetchNsfwStatus, 1500);
+      } else if (wasRunning) {
+        await refreshAssets({ keepSelection: true });
+        if (nsfw.task?.status === 'completed') {
+          showToast({ message: `NSFW scan finished: ${nsfw.task.done} images analysed.`, tone: 'success' });
+        }
+      }
+    } catch (error) {
+      console.debug(error);
+    }
+  }
+
+  async function updateNsfwSettings(patch) {
+    nsfw.saving = true;
+    try {
+      const payload = await readJson(
+        await fetch(API.nsfwSettings, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch)
+        }),
+        'Could not save blur settings'
+      );
+      Object.assign(nsfw.settings, payload.settings || {});
+      if (blurThumbnails && 'preview' in patch) blurThumbnails.value = Boolean(nsfw.settings.preview);
+      const reclassify = ['nsfw_preset', 'nsfw_sensitivity', 'nsfw_see_through'].some((key) => key in patch);
+      if (reclassify) await refreshAssets({ keepSelection: true });
+    } catch (error) {
+      showToast({ message: error.message, tone: 'error' });
+    } finally {
+      nsfw.saving = false;
+    }
+  }
+
+  /** Blur mode for the menu: 'all' (everything), 'nsfw' (only NSFW) or 'off'. */
+  function setBlurMode(mode) {
+    updateNsfwSettings({ preview: mode === 'all', nsfw_blur: mode !== 'off' });
+  }
+
+  async function nsfwScan(action = 'start') {
+    if (!filters.root) return;
+    try {
+      const payload = await readJson(
+        await fetch(API.nsfwScan, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ root: filters.root, action })
+        }),
+        'NSFW scan failed'
+      );
+      nsfw.task = payload.task || null;
+      await fetchNsfwStatus();
+    } catch (error) {
+      showToast({ message: error.message, tone: 'error', timeout: 9000 });
+    }
+  }
+
+  /** How to blur an asset: null, { mode: 'image' } or { mode: 'regions', regions }. */
+  function blurFor(asset) {
+    if (!asset) return null;
+    if (blurThumbnails?.value) return { mode: 'image' };
+    const verdict = asset.nsfw;
+    if (!nsfw.settings.nsfw_blur || verdict?.rating !== 'nsfw') return null;
+    if (nsfw.settings.nsfw_blur_style === 'regions' && Array.isArray(verdict.regions) && verdict.regions.length) {
+      return { mode: 'regions', regions: verdict.regions };
+    }
+    return { mode: 'image' };
+  }
+
+  onBeforeUnmount(() => clearTimeout(nsfwPollTimer));
+
   watch(
     () => filters.root,
     () => {
@@ -260,6 +465,7 @@ export function useLibraryExtras({
       filters.similarTo = '';
       fetchFacets();
       fetchCollections();
+      fetchNsfwStatus();
     },
     { immediate: true }
   );
@@ -281,6 +487,18 @@ export function useLibraryExtras({
     applySearch,
     findSimilar,
     queueInComfy,
+    rate,
+    rateSelection,
+    setRatingFilter,
+    trashAllRejects,
+    cullBusy,
+    nsfw,
+    fetchNsfwStatus,
+    updateNsfwSettings,
+    setBlurMode,
+    nsfwScan,
+    blurFor,
+    overlayComponent: markRaw(NsfwOverlay),
     assets
   };
   // reactive() unwraps the refs so templates can read library.facets, library.liveNewCount directly.
