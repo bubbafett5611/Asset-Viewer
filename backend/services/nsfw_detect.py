@@ -45,7 +45,21 @@ NUDENET_INPUT = 640
 NUDENET_MIN_SCORE = 0.2
 
 WD_INPUT = 448
-WD_NUDITY_TAGS = {"nude", "completely_nude", "topless", "bottomless", "nipples", "areolae", "pussy", "penis", "anus", "sex", "breasts_out", "nipple_slip", "areola_slip"}
+WD_NUDITY_TAGS = {
+    "nude",
+    "completely_nude",
+    "topless",
+    "bottomless",
+    "nipples",
+    "areolae",
+    "pussy",
+    "penis",
+    "anus",
+    "sex",
+    "breasts_out",
+    "nipple_slip",
+    "areola_slip",
+}
 WD_SEE_THROUGH_TAGS = {"see-through", "see-through_shirt", "see-through_clothes", "covered_nipples", "wet_clothes"}
 WD_MIN_SCORE = 0.1
 
@@ -194,7 +208,9 @@ class NudeNetDetector:
                 continue
             x1, y1, x2, y2 = boxes[index]
             box = [float(min(1, max(0, value))) for value in (x1 / width, y1 / height, x2 / width, y2 / height)]
-            regions.append({"label": label, "score": round(float(scores[index]), 4), "box": [round(v, 4) for v in box], "source": "nudenet"})
+            regions.append(
+                {"label": label, "score": round(float(scores[index]), 4), "box": [round(v, 4) for v in box], "source": "nudenet"}
+            )
         return regions
 
 
