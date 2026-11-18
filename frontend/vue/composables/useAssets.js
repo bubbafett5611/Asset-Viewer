@@ -1,3 +1,5 @@
+import { describeLoadedCount } from '../formatters.js';
+
 export function useAssets(options) {
   const {
     API,
@@ -22,6 +24,8 @@ export function useAssets(options) {
     isDeleting,
     safeDelete,
     hasMore,
+    assetTotal,
+    notify,
     blurThumbnails,
     isDropOverlayVisible,
     isDeleteConfirmVisible,
@@ -46,6 +50,7 @@ export function useAssets(options) {
       filters.q,
       filters.ext,
       filters.metadataBadge,
+      filters.favorites,
       filters.sortBy,
       filters.sortDir
     ]);
@@ -63,6 +68,7 @@ export function useAssets(options) {
       isLoading.value = false;
       isLoadingMore.value = false;
       hasMore.value = false;
+      if (assetTotal) assetTotal.value = null;
       statusText.value = 'No library selected.';
       return;
     }
@@ -82,6 +88,7 @@ export function useAssets(options) {
         sort_by: filters.sortBy,
         sort_dir: filters.sortDir,
         metadata_badges: filters.metadataBadge,
+        favorites: filters.favorites,
         limit: pageSize,
         offset: nextOffset,
         refresh_index: refreshIndex ? 'true' : ''
@@ -99,8 +106,10 @@ export function useAssets(options) {
       offset.value = nextOffset;
       loadedIdentity = identity;
       assets.value = append ? assets.value.concat(incoming) : incoming;
-      hasMore.value = incoming.length === pageSize;
-      statusText.value = `Loaded ${assets.value.length} ${assets.value.length === 1 ? 'item' : 'items'}.`;
+      const total = Number.isFinite(payload.total) ? payload.total : null;
+      if (assetTotal) assetTotal.value = total;
+      hasMore.value = total === null ? incoming.length === pageSize : assets.value.length < total;
+      statusText.value = describeLoadedCount(assets.value.length, total);
 
       if (!append && !keepSelection) {
         selectedAsset.value = null;
@@ -241,6 +250,17 @@ export function useAssets(options) {
       statusText.value = errors
         ? `${deleteVerb} ${deleted}; ${errors} failed.`
         : `${deleteVerb} ${deleted} media files.`;
+      const trashed = Array.isArray(payload.moved) ? payload.moved : [];
+      if (notify && shouldSafeDelete && trashed.length) {
+        notify({
+          message: `Moved ${trashed.length} ${trashed.length === 1 ? 'file' : 'files'} to trash.`,
+          tone: 'success',
+          timeout: 10000,
+          action: { label: 'Undo', run: () => restoreTrashed(trashed) }
+        });
+      } else if (notify && deleted) {
+        notify({ message: statusText.value, tone: errors ? 'warn' : 'success' });
+      }
       if (activeTab.value === 'duplicates') {
         duplicateStatusText.value = hasNewSelection
           ? `${selectedPaths.value.size} selected`
@@ -253,6 +273,33 @@ export function useAssets(options) {
       statusText.value = error?.message || 'Delete failed.';
     } finally {
       isDeleting.value = false;
+    }
+  }
+
+  async function restoreTrashed(items) {
+    try {
+      const response = await fetch(API.restore, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items })
+      });
+      if (!response.ok) {
+        throw new Error(`Restore failed (${response.status})`);
+      }
+      const payload = await response.json();
+      const restored = Array.isArray(payload.restored) ? payload.restored.length : 0;
+      const failed = Array.isArray(payload.errors) ? payload.errors.length : 0;
+      if (activeTab.value !== 'duplicates') {
+        await refreshAssets({ keepSelection: true });
+      }
+      statusText.value = failed
+        ? `Restored ${restored} media files; ${failed} failed.`
+        : `Restored ${restored} media files.`;
+      notify?.({ message: statusText.value, tone: failed ? 'warn' : 'success' });
+    } catch (error) {
+      console.error(error);
+      statusText.value = error?.message || 'Restore failed.';
+      notify?.({ message: statusText.value, tone: 'error' });
     }
   }
 
@@ -376,6 +423,7 @@ export function useAssets(options) {
     requestDeleteAsset,
     hideDeleteConfirm,
     confirmDelete,
+    restoreTrashed,
     uploadFiles,
     hideDropOverlay,
     onWindowDragEnter,

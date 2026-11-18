@@ -10,6 +10,7 @@ import { useStats } from '/vue/composables/useStats.js';
 import { useViewerLayout } from '/vue/composables/useViewerLayout.js';
 import { useViewerLifecycle } from '/vue/composables/useViewerLifecycle.js';
 import { useViewerProps } from '/vue/composables/useViewerProps.js';
+import { showToast } from '/vue/components/ToastHost.js';
 
 const FAVORITES_KEY = 'bubba_asset_viewer_tag_favorites';
 const RECENT_KEY = 'bubba_asset_viewer_tag_recent';
@@ -215,6 +216,7 @@ export function useAssetViewerState() {
   const isDeleting = ref(false);
   const safeDelete = ref(true);
   const hasMore = ref(false);
+  const assetTotal = ref(null);
   const blurThumbnails = ref(false);
   const isDropOverlayVisible = ref(false);
   const isDeleteConfirmVisible = ref(false);
@@ -299,6 +301,7 @@ export function useAssetViewerState() {
     q: '',
     ext: '',
     metadataBadge: '',
+    favorites: '',
     sortBy: ['name', 'extension', 'modified', 'size', 'metadata'].includes(savedSettings.sortBy)
       ? savedSettings.sortBy
       : 'modified',
@@ -545,6 +548,7 @@ export function useAssetViewerState() {
     filters.q = '';
     filters.ext = '';
     filters.metadataBadge = '';
+    filters.favorites = '';
   }
 
   function retryAssets() {
@@ -668,10 +672,12 @@ export function useAssetViewerState() {
     }
   }
 
-  async function moveSelectedAssets(folder = '') {
-    const paths = Array.from(
-      selectedPaths.value.size ? selectedPaths.value : new Set(selectedPath.value ? [selectedPath.value] : [])
-    );
+  async function moveSelectedAssets(folder = '', explicitPaths = null) {
+    const paths = Array.isArray(explicitPaths)
+      ? explicitPaths.filter(Boolean)
+      : Array.from(
+          selectedPaths.value.size ? selectedPaths.value : new Set(selectedPath.value ? [selectedPath.value] : [])
+        );
     if (!paths.length || isDeleting.value) {
       return;
     }
@@ -701,6 +707,7 @@ export function useAssetViewerState() {
       statusText.value = errors
         ? `Moved ${moved.length} media files; ${errors} failed.`
         : `Moved ${moved.length} media files to ${folder || 'root'}.`;
+      showToast({ message: statusText.value, tone: errors ? 'warn' : 'success' });
     } catch (error) {
       console.error(error);
       statusText.value = error?.message || 'Move failed.';
@@ -726,6 +733,50 @@ export function useAssetViewerState() {
 
   function metadataBadges(asset) {
     return Array.isArray(asset?.metadata_badges) ? asset.metadata_badges : [];
+  }
+
+  async function toggleFavorite(target = null) {
+    const targetPaths = target?.path
+      ? [target.path]
+      : Array.from(
+          selectedPaths.value.size ? selectedPaths.value : new Set(selectedPath.value ? [selectedPath.value] : [])
+        );
+    if (!targetPaths.length) {
+      return;
+    }
+    const lookup = (path) =>
+      assets.value.find((asset) => asset.path === path) || (details.value?.path === path ? details.value : null);
+    // Favorite all when any target is not yet a favorite; otherwise unfavorite all.
+    const favorite = targetPaths.some((path) => !lookup(path)?.favorite);
+    const apply = (value) => {
+      for (const path of targetPaths) {
+        const asset = assets.value.find((item) => item.path === path);
+        if (asset) asset.favorite = value;
+        if (details.value?.path === path) details.value = { ...details.value, favorite: value };
+        if (selectedAsset.value?.path === path) selectedAsset.value = { ...selectedAsset.value, favorite: value };
+      }
+    };
+    apply(favorite);
+    try {
+      const response = await fetch(API.favorite, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths: targetPaths, favorite })
+      });
+      if (!response.ok) {
+        throw new Error(`Favorite update failed (${response.status})`);
+      }
+      if (targetPaths.length > 1) {
+        showToast({
+          message: `${favorite ? 'Added' : 'Removed'} ${targetPaths.length} ${favorite ? 'to' : 'from'} favorites.`,
+          tone: 'success'
+        });
+      }
+    } catch (error) {
+      console.error(error);
+      apply(!favorite);
+      showToast({ message: error?.message || 'Favorite update failed.', tone: 'error' });
+    }
   }
 
   async function loadAssetDetails(asset) {
@@ -777,6 +828,7 @@ export function useAssetViewerState() {
     lastSelectedIndex,
     lastSelectedDuplicateIndex,
     statusText,
+    assetTotal,
     duplicateStatusText,
     loadAssetDetails,
     updateSelectionStatus,
@@ -875,6 +927,8 @@ export function useAssetViewerState() {
     isDeleting,
     safeDelete,
     hasMore,
+    assetTotal,
+    notify: showToast,
     blurThumbnails,
     isDropOverlayVisible,
     isDeleteConfirmVisible,
@@ -1088,7 +1142,8 @@ export function useAssetViewerState() {
     updateSelectionStatus,
     duplicateStatusText,
     deleteCount,
-    requestDeleteSelected
+    requestDeleteSelected,
+    toggleFavorite
   });
 
   function loadUpdateNoticeState() {
@@ -1463,6 +1518,8 @@ export function useAssetViewerState() {
     startPreviewResize,
     openContainingFolder,
     repairSelectedMetadata,
+    toggleFavorite,
+    toggleFavorite,
     tagFilters,
     tagCategories,
     tagStatusText,

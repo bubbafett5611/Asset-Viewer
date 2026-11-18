@@ -14,7 +14,7 @@ export const AssetDetailsPanel = {
       default: null
     }
   },
-  emits: ['delete-asset', 'open-folder', 'repair-metadata', 'resize-preview'],
+  emits: ['delete-asset', 'open-folder', 'repair-metadata', 'resize-preview', 'toggle-favorite', 'filter-by'],
   setup(props) {
     const previewableExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tif', '.tiff']);
     const videoExtensions = new Set(['.mp4']);
@@ -117,15 +117,14 @@ export const AssetDetailsPanel = {
         const loraNames = Array.isArray(generationSource.loras) ? generationSource.loras : [];
         const loraStrengths = Array.isArray(generationSource.lora_strengths) ? generationSource.lora_strengths : [];
         if (loraNames.length && loraStrengths.length) {
-          generationPairs.push([
-            'loras',
-            loraNames
-              .map((name, index) => {
-                const [modelStrength, clipStrength] = loraStrengths[index] || [1, 1];
-                return `${name} (${modelStrength === clipStrength ? modelStrength : `${modelStrength}/${clipStrength}`})`;
-              })
-              .join(', ')
-          ]);
+          const loraChips = loraNames.map((name, index) => {
+            const [modelStrength, clipStrength] = loraStrengths[index] || [1, 1];
+            return {
+              label: `${name} (${modelStrength === clipStrength ? modelStrength : `${modelStrength}/${clipStrength}`})`,
+              value: String(name)
+            };
+          });
+          generationPairs.push(['loras', loraChips.map((chip) => chip.label).join(', '), loraChips]);
         } else {
           addGenerationFieldFromKeys('loras', ['loras']);
         }
@@ -150,6 +149,18 @@ export const AssetDetailsPanel = {
         }
         addGenerationFieldFromKeys('save_prefix', ['save_prefix']);
         addGenerationFieldFromKeys('filepath', ['filepath', 'file', 'path']);
+      }
+
+      // Values that make useful "find all media like this" searches become clickable chips.
+      const filterableLabels = new Set(['model', 'seed', 'sampler', 'scheduler', 'vae', 'clip']);
+      for (const pair of generationPairs) {
+        if (pair[2] || !filterableLabels.has(pair[0])) {
+          continue;
+        }
+        const value = String(pair[1] || '').trim();
+        if (value && value.length <= 200 && !value.includes('\n')) {
+          pair[2] = [{ label: value, value }];
+        }
       }
 
       const extraBubbaPairs = [];
@@ -251,7 +262,10 @@ export const AssetDetailsPanel = {
       }
     };
 
+    const isFavorite = computed(() => Boolean(props.assetDetails?.favorite ?? props.selectedAsset?.favorite));
+
     return {
+      isFavorite,
       fileUrl,
       formatBytes,
       formatDate,
@@ -288,6 +302,14 @@ export const AssetDetailsPanel = {
                     <div v-else class="preview-empty">No media selected</div>
                 </div>
                 <div v-if="selectedAsset" class="preview-actions">
+                    <button
+                        type="button"
+                        class="preview-action preview-action-favorite"
+                        :class="{ 'is-active': isFavorite }"
+                        :aria-pressed="isFavorite"
+                        title="Toggle favorite (F)"
+                        @click="$emit('toggle-favorite', selectedAsset)"
+                    >{{ isFavorite ? '★ Favorited' : '☆ Favorite' }}</button>
                     <button type="button" class="preview-action" @click="openFull">Open full size</button>
                     <button type="button" class="preview-action" @click="$emit('open-folder', selectedAsset)">Open folder</button>
                     <button type="button" class="preview-action" @click="copyText(selectedAsset.path)">Copy path</button>
@@ -328,7 +350,20 @@ export const AssetDetailsPanel = {
                         <summary>Generation</summary>
                         <div class="kv" v-for="pair in metadataSummary.generationPairs" :key="'gen-' + pair[0]">
                             <div class="kv-key">{{ pair[0] }}</div>
-                            <div class="kv-value">{{ pair[1] }}</div>
+                            <div v-if="pair[2] && pair[2].length" class="kv-value kv-value--chips">
+                                <button
+                                    v-for="chip in pair[2]"
+                                    :key="chip.label"
+                                    type="button"
+                                    class="kv-filter-chip"
+                                    :title="'Show all media matching ' + chip.value"
+                                    @click="$emit('filter-by', chip.value)"
+                                >
+                                    <span>{{ chip.label }}</span>
+                                    <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10.2 10.2 13.5 13.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+                                </button>
+                            </div>
+                            <div v-else class="kv-value">{{ pair[1] }}</div>
                         </div>
                     </details>
 

@@ -78,6 +78,15 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
         )
         """
     )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS favorites (
+            path TEXT PRIMARY KEY,
+            root TEXT NOT NULL,
+            added_at REAL NOT NULL
+        )
+        """
+    )
     connection.execute("CREATE INDEX IF NOT EXISTS idx_assets_root_name ON assets(root, name, relative_path)")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_assets_root_modified ON assets(root, modified_ts)")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_assets_root_size ON assets(root, size_bytes)")
@@ -354,6 +363,8 @@ def list_indexed_assets(
     metadata_mode: str = "all",
     metadata_badge_filter: list[str] | None = None,
     folder: str = "",
+    stats: dict[str, Any] | None = None,
+    favorites_only: bool = False,
 ) -> list[dict[str, Any]] | None:
     normalized_root = os.path.abspath(root)
     db_path = asset_index_cache_file(normalized_root)
@@ -383,11 +394,18 @@ def list_indexed_assets(
             if row is None:
                 return None
             rows = list(connection.execute("SELECT * FROM assets WHERE root = ?", (normalized_root,)))
+            favorite_paths = {
+                str(fav["path"])
+                for fav in connection.execute("SELECT path FROM favorites WHERE root = ?", (normalized_root,))
+            }
     except sqlite3.Error:
         return None
 
     items: list[dict[str, Any]] = []
     for row in rows:
+        is_favorite = str(row["path"]) in favorite_paths
+        if favorites_only and not is_favorite:
+            continue
         extension = str(row["extension"] or "").lower()
         requested_folder = request_state["requested_folder"]
         if requested_folder:
@@ -426,12 +444,17 @@ def list_indexed_assets(
             elif not requested_badges.issubset(badge_keys):
                 continue
 
-        items.append(_item_from_row(row, include_metadata=include_metadata))
+        item = _item_from_row(row, include_metadata=include_metadata)
+        if is_favorite:
+            item["favorite"] = True
+        items.append(item)
 
     items.sort(
         key=lambda item: _sort_key(request_state["requested_sort_by"], item),
         reverse=request_state["requested_sort_dir"] == "desc",
     )
+    if stats is not None:
+        stats["total"] = len(items)
     return items[request_state["offset"] : request_state["offset"] + request_state["limit"]]
 
 
@@ -529,23 +552,75 @@ def update_duplicate_hashes(root: str, path: str, hashes: dict[str, Any]) -> Non
         connection.commit()
 
 
+def set_asset_favorite(root: str, path: str, favorite: bool) -> None:
+    normalized_root = os.path.abspath(root)
+    abs_path = os.path.abspath(path)
+    with _connect(normalized_root) as connection:
+        _ensure_schema(connection)
+        if favorite:
+            connection.execute(
+                "INSERT OR REPLACE INTO favorites(path, root, added_at) VALUES (?, ?, ?)",
+                (abs_path, normalized_root, time.time()),
+            )
+        else:
+            connection.execute("DELETE FROM favorites WHERE path = ?", (abs_path,))
+        connection.commit()
+
+
+def is_asset_favorite(root: str, path: str) -> bool:
+    normalized_root = os.path.abspath(root)
+    if not asset_index_cache_file(normalized_root).exists():
+        return False
+    try:
+        with _connect(normalized_root) as connection:
+            _ensure_schema(connection)
+            row = connection.execute("SELECT 1 FROM favorites WHERE path = ?", (os.path.abspath(path),)).fetchone()
+            return row is not None
+    except sqlite3.Error:
+        return False
+
+
+def move_asset_favorite(root: str, old_path: str, new_path: str) -> None:
+    """Keep a favorite attached to a file after it is moved or restored."""
+    normalized_root = os.path.abspath(root)
+    if not asset_index_cache_file(normalized_root).exists():
+        return
+    with _connect(normalized_root) as connection:
+        _ensure_schema(connection)
+        connection.execute(
+            "UPDATE OR REPLACE favorites SET path = ? WHERE path = ?",
+            (os.path.abspath(new_path), os.path.abspath(old_path)),
+        )
+        connection.commit()
+
+
 def list_asset_folders(root: str) -> list[dict[str, Any]]:
     normalized_root = os.path.abspath(root)
-    folders = [{"path": "", "label": "root", "depth": 0}]
+    root_folder: dict[str, Any] = {"path": "", "label": "root", "depth": 0, "file_count": 0}
+    folders = [root_folder]
     if not os.path.isdir(normalized_root):
         return folders
 
-    for current_dir, dirnames, _filenames in os.walk(normalized_root):
+    by_path: dict[str, dict[str, Any]] = {"": root_folder}
+    for current_dir, dirnames, filenames in os.walk(normalized_root):
         dirnames[:] = [name for name in dirnames if name not in EXCLUDED_DIRS]
         dirnames.sort(key=str.lower)
         if os.path.abspath(current_dir) == normalized_root:
+            root_folder["file_count"] += len(filenames)
             continue
         rel_path = os.path.relpath(current_dir, normalized_root)
-        folders.append(
-            {
-                "path": rel_path,
-                "label": os.path.basename(current_dir),
-                "depth": len(Path(rel_path).parts),
-            }
-        )
+        folder = {
+            "path": rel_path,
+            "label": os.path.basename(current_dir),
+            "depth": len(Path(rel_path).parts),
+            "file_count": len(filenames),
+        }
+        by_path[rel_path] = folder
+        folders.append(folder)
+
+    # Roll each folder's direct file count up into its ancestors so counts are recursive,
+    # matching what the media grid shows when a folder is selected. Deepest folders first.
+    for folder in sorted(folders[1:], key=lambda item: item["depth"], reverse=True):
+        parent = by_path.get(os.path.dirname(folder["path"]), root_folder)
+        parent["file_count"] += folder["file_count"]
     return folders

@@ -233,6 +233,54 @@ body.panel-resizing {
   opacity: 0.35;
 }
 
+.folder-expand-button:not(:disabled) {
+  display: grid;
+  place-items: center;
+}
+
+.folder-expand-button:not(:disabled):hover {
+  color: var(--text);
+  background: rgba(var(--accent-rgb), 0.12);
+}
+
+.folder-chevron {
+  width: 12px;
+  height: 12px;
+  transition: transform var(--transition-fast);
+}
+
+.folder-chevron.is-expanded {
+  transform: rotate(90deg);
+}
+
+.folder-tree-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.folder-tree-count {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+  background: var(--surface-04);
+  font: 600 0.68rem var(--mono-font);
+  font-variant-numeric: tabular-nums;
+}
+
+.folder-tree-row.active .folder-tree-count {
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.14);
+}
+
+.folder-tree-row .folder-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .folder-tree-item {
   display: block;
   width: 100%;

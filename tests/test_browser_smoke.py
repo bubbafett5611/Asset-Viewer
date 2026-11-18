@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import pytest
 from playwright import sync_api as playwright
 from ui_fixture import start_server, install_routes
@@ -26,7 +28,7 @@ def test_browser_smoke_loads_core_flows(live_server):
         assert page.title() == "Bubba Media Viewer"
         page.get_by_role("button", name="Media").click()
         page.get_by_role("searchbox", name="Search").fill("Challenge")
-        page.locator(".media-feedback").get_by_text("Loaded", exact=False).wait_for(timeout=5000)
+        page.locator(".media-feedback").get_by_text(re.compile(r"\bitems?\.")).wait_for(timeout=5000)
 
         page.get_by_role("button", name="Tag Browser").click()
         page.get_by_role("searchbox", name="Tag Search").fill("red hair")

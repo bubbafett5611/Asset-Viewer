@@ -69,7 +69,15 @@ export function useViewerLifecycle(options) {
   );
 
   watch(
-    () => [filters.root, filters.folder, filters.ext, filters.metadataBadge, filters.sortBy, filters.sortDir],
+    () => [
+      filters.root,
+      filters.folder,
+      filters.ext,
+      filters.metadataBadge,
+      filters.favorites,
+      filters.sortBy,
+      filters.sortDir
+    ],
     async () => {
       await fetchAssets({ append: false });
     }

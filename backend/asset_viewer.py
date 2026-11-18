@@ -947,6 +947,8 @@ def list_indexed_assets(
 	metadata_mode: str = METADATA_MODE_ALL,
 	metadata_badge_filter: list[str] | None = None,
 	folder: str = "",
+	stats: dict[str, Any] | None = None,
+	favorites_only: bool = False,
 ) -> list[dict[str, Any]] | None:
 	from services.asset_index import list_indexed_assets as _list_indexed_assets
 
@@ -967,6 +969,8 @@ def list_indexed_assets(
 		metadata_mode=metadata_mode,
 		metadata_badge_filter=metadata_badge_filter,
 		folder=folder,
+		stats=stats,
+		favorites_only=favorites_only,
 	)
 
 
@@ -974,6 +978,24 @@ def upsert_asset_in_index(root: str, path: str) -> None:
 	from services.asset_index import upsert_asset_in_index as _upsert_asset_in_index
 
 	_upsert_asset_in_index(root, path, _asset_index_runtime())
+
+
+def set_asset_favorite(root: str, path: str, favorite: bool) -> None:
+	from services.asset_index import set_asset_favorite as _set_asset_favorite
+
+	_set_asset_favorite(root, path, favorite)
+
+
+def is_asset_favorite(root: str, path: str) -> bool:
+	from services.asset_index import is_asset_favorite as _is_asset_favorite
+
+	return _is_asset_favorite(root, path)
+
+
+def move_asset_favorite(root: str, old_path: str, new_path: str) -> None:
+	from services.asset_index import move_asset_favorite as _move_asset_favorite
+
+	_move_asset_favorite(root, old_path, new_path)
 
 
 def delete_assets_from_index(root: str, paths: list[str]) -> None:

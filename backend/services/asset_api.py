@@ -19,10 +19,12 @@ from asset_viewer import (
     folder_stats_report,
     generate_thumbnail_bytes,
     index_has_assets,
+    is_asset_favorite,
     list_asset_folders,
     list_indexed_assets,
     make_unique_destination_path,
     metadata_health_report,
+    move_asset_favorite,
     move_file_to_trash,
     repair_png_bubba_metadata,
     refresh_asset_index,
@@ -31,6 +33,7 @@ from asset_viewer import (
     sanitize_upload_filename,
     scan_assets,
     scan_duplicate_assets,
+    set_asset_favorite,
     upsert_asset_in_index,
 )
 from flask import Response, abort, jsonify, request, send_file, stream_with_context
@@ -171,6 +174,7 @@ def api_assets_list_handler():
     max_size_bytes = request.args.get('max_size_bytes')
     modified_after_ts = request.args.get('modified_after_ts')
     metadata_mode = request.args.get('metadata_mode', 'all')
+    favorites_only = request.args.get('favorites', '').lower() in {'1', 'true', 'yes'}
     metadata_badges = [item.strip() for item in request.args.get('metadata_badges', '').split(',') if item.strip()]
     try:
         min_size_filter = int(min_size_bytes) if min_size_bytes else None
@@ -184,6 +188,7 @@ def api_assets_list_handler():
     except Exception as e:
         abort(400, str(e))
 
+    list_stats: dict = {}
     assets = list_indexed_assets(
         root=root_path,
         query=q,
@@ -199,6 +204,8 @@ def api_assets_list_handler():
         metadata_mode=metadata_mode,
         metadata_badge_filter=metadata_badges,
         folder=folder,
+        stats=list_stats,
+        favorites_only=favorites_only,
     )
     cache_used = assets is not None
     if assets is None:
@@ -221,7 +228,11 @@ def api_assets_list_handler():
             metadata_mode=metadata_mode,
             metadata_badge_filter=metadata_badges,
             folder=folder,
+            stats=list_stats,
+            favorites_only=favorites_only,
         )
+        if assets is None and favorites_only:
+            assets = []
         if assets is None:
             assets = scan_assets(
                 root=root_path,
@@ -259,10 +270,15 @@ def api_assets_list_handler():
             metadata_mode=metadata_mode,
             metadata_badge_filter=metadata_badges,
             folder=folder,
+            stats=list_stats,
+            favorites_only=favorites_only,
         )
         assets = refreshed_assets if refreshed_assets is not None else assets
         cache_used = False
-    return jsonify({'assets': assets, 'root': root_key, 'cache': {'used': cache_used, 'indexed': index_has_assets(root_path)}})
+    payload = {'assets': assets, 'root': root_key, 'cache': {'used': cache_used, 'indexed': index_has_assets(root_path)}}
+    if 'total' in list_stats:
+        payload['total'] = list_stats['total']
+    return jsonify(payload)
 
 
 def api_assets_folders_handler():
@@ -361,6 +377,7 @@ def api_assets_move_handler():
             try:
                 delete_assets_from_index(root_path, [source])
                 upsert_asset_in_index(root_path, destination)
+                move_asset_favorite(root_path, source, destination)
             except Exception:
                 logger.exception('Asset index update failed after moving %s', source)
             moved.append({'path': requested_path, 'destination': destination, 'asset': build_asset_item(destination, root_path)})
@@ -504,9 +521,84 @@ def api_assets_details_handler():
         if not root:
             abort(400, 'File not in allowed roots')
         item = build_asset_item(abs_path, root.path, include_metadata=True)
+        if is_asset_favorite(root.path, abs_path):
+            item['favorite'] = True
     except Exception as e:
         abort(400, str(e))
     return jsonify({'asset': item})
+
+
+def api_assets_favorite_handler():
+    asset_roots = _get_asset_roots_snapshot()
+    payload = request.get_json(silent=True) or {}
+    requested_paths = payload.get('paths')
+    if isinstance(payload.get('path'), str):
+        requested_paths = [payload['path']]
+    if not isinstance(requested_paths, list) or not requested_paths:
+        abort(400, 'No paths provided')
+    favorite = payload.get('favorite', True) is not False
+    updated = []
+    errors = []
+    for requested_path in requested_paths:
+        if not isinstance(requested_path, str):
+            continue
+        try:
+            abs_path = resolve_requested_file(requested_path, asset_roots)
+            root = find_root_for_path(abs_path, asset_roots)
+            if not root:
+                raise PermissionError('File not in allowed roots')
+            set_asset_favorite(root.path, abs_path, favorite)
+            updated.append(requested_path)
+        except Exception as error:
+            logger.exception('Favorite update failed for %s', requested_path)
+            errors.append({'path': requested_path, 'error': str(error)})
+    return jsonify({'favorite': favorite, 'updated': updated, 'errors': errors})
+
+
+def api_assets_restore_handler():
+    """Undo a safe delete: move files from a root's trash folder back to their original paths."""
+    asset_roots = _get_asset_roots_snapshot()
+    payload = request.get_json(silent=True) or {}
+    items = payload.get('items')
+    if not isinstance(items, list) or not items:
+        abort(400, 'No items provided')
+    restored = []
+    errors = []
+    for entry in items:
+        original = entry.get('path') if isinstance(entry, dict) else None
+        trashed = entry.get('destination') if isinstance(entry, dict) else None
+        if not isinstance(original, str) or not isinstance(trashed, str):
+            errors.append({'path': original, 'error': 'Invalid restore item'})
+            continue
+        try:
+            original_abs = os.path.abspath(original)
+            trashed_abs = os.path.abspath(trashed)
+            root = find_root_for_path(original_abs, asset_roots)
+            if not root:
+                raise PermissionError('File not in allowed roots')
+            trash_dir = os.path.join(os.path.abspath(root.path), '.asset_viewer_trash')
+            if os.path.commonpath([trash_dir, trashed_abs]) != trash_dir:
+                raise PermissionError('Restore source is not in the trash folder.')
+            if not os.path.isfile(trashed_abs):
+                raise FileNotFoundError('Trashed file no longer exists.')
+            if os.path.commonpath([trash_dir, original_abs]) == trash_dir:
+                raise PermissionError('Cannot restore into the trash folder.')
+            destination = original_abs
+            if os.path.exists(destination):
+                destination = _unique_move_path(os.path.dirname(destination), os.path.basename(destination))
+            os.makedirs(os.path.dirname(destination), exist_ok=True)
+            shutil.move(trashed_abs, destination)
+            try:
+                upsert_asset_in_index(root.path, destination)
+                if destination != original_abs:
+                    move_asset_favorite(root.path, original_abs, destination)
+            except Exception:
+                logger.exception('Asset index update failed after restoring %s', destination)
+            restored.append({'path': original, 'restored_to': destination})
+        except Exception as error:
+            logger.exception('Restore failed for %s', original)
+            errors.append({'path': original, 'error': str(error)})
+    return jsonify({'restored': restored, 'errors': errors})
 
 
 def api_assets_repair_metadata_handler():

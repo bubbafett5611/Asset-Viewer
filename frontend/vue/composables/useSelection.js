@@ -1,3 +1,5 @@
+import { describeLoadedCount } from '../formatters.js';
+
 export function useSelection(options) {
   const {
     assets,
@@ -9,6 +11,7 @@ export function useSelection(options) {
     lastSelectedIndex,
     lastSelectedDuplicateIndex,
     statusText,
+    assetTotal,
     duplicateStatusText,
     loadAssetDetails,
     updateSelectionStatus,
@@ -115,7 +118,7 @@ export function useSelection(options) {
     replaceSelectedPaths([]);
     lastSelectedIndex.value = -1;
     lastSelectedDuplicateIndex.value = -1;
-    statusText.value = `Loaded ${assets.value.length} ${assets.value.length === 1 ? 'item' : 'items'}.`;
+    statusText.value = describeLoadedCount(assets.value.length, assetTotal?.value ?? null);
   }
 
   function selectAllAssets() {

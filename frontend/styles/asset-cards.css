@@ -13,6 +13,8 @@
     transform var(--transition-fast),
     box-shadow var(--transition-base);
   display: grid;
+  /* minmax(0, …) stops the nowrap title's min-content width from widening the column past the card. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 7px;
 }
 
@@ -42,9 +44,55 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  opacity: 0;
   transition:
+    opacity 220ms ease-out,
     filter var(--transition-base),
     transform var(--transition-base);
+}
+
+.asset-thumb.thumb-loaded img,
+.asset-thumb.thumb-loaded video {
+  opacity: 1;
+}
+
+/* Shimmer sweep while a thumbnail is still being generated or downloaded. */
+.asset-thumb:has(img, video):not(.thumb-loaded):not(.thumb-failed)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    rgba(var(--accent-rgb), 0.1) 45%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(var(--accent-rgb), 0.1) 55%,
+    transparent 80%
+  );
+  background-size: 250% 100%;
+  animation: thumb-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes thumb-shimmer {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .asset-thumb:has(img, video):not(.thumb-loaded):not(.thumb-failed)::after {
+    animation: none;
+    background: rgba(var(--accent-rgb), 0.06);
+  }
+
+  .asset-thumb img,
+  .asset-thumb video {
+    transition: none;
+  }
 }
 
 .asset-thumb:not(:has(img)):not(:has(video)) .asset-thumb-fallback,
@@ -191,15 +239,24 @@
 
 .asset-title {
   margin: 0;
+  min-width: 0;
   font-size: 0.92rem;
   font-weight: 600;
   line-height: 1.35;
-  word-break: break-word;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 1;
-  line-clamp: 1;
+  display: flex;
+  white-space: nowrap;
   overflow: hidden;
+}
+
+/* Middle truncation: the head ellipsizes, the distinguishing tail always stays visible. */
+.asset-title-head {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.asset-title-tail {
+  flex: none;
 }
 
 .asset-chip {

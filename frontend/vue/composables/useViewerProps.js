@@ -64,6 +64,7 @@ export function useViewerProps(options) {
     startPreviewResize,
     openContainingFolder,
     repairSelectedMetadata,
+    toggleFavorite,
     tagFilters,
     tagCategories,
     tagStatusText,
@@ -194,7 +195,8 @@ export function useViewerProps(options) {
     startDetailsResize,
     startPreviewResize,
     openContainingFolder,
-    repairSelectedMetadata
+    repairSelectedMetadata,
+    toggleFavorite
   }));
 
   const tagsViewProps = computed(() => ({

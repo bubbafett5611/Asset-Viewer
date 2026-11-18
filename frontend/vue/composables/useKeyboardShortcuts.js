@@ -41,7 +41,8 @@ export function useKeyboardShortcuts(options) {
     updateSelectionStatus,
     duplicateStatusText,
     deleteCount,
-    requestDeleteSelected
+    requestDeleteSelected,
+    toggleFavorite
   } = options;
 
   function onDocumentKeydown(event) {
@@ -200,6 +201,12 @@ export function useKeyboardShortcuts(options) {
       return;
     }
 
+    if (key === 'f' && !isCommandKey && isMediaTab && hasPathSelection && toggleFavorite) {
+      event.preventDefault();
+      toggleFavorite();
+      return;
+    }
+
     if (key === 'b' && isMediaTab) {
       event.preventDefault();
       toggleBlurThumbnails();
@@ -273,9 +280,13 @@ export function useKeyboardShortcuts(options) {
       stepSelectedAsset(-1, { extend: event.shiftKey });
       return;
     }
-    if (event.key === 'Enter' && activeTab.value === 'assets') {
+    if (event.key === 'Enter' && activeTab.value === 'assets' && selectedPath.value) {
+      const focusedControl = event.target.closest?.('button, summary, a');
+      if (focusedControl && !focusedControl.classList.contains('asset-card')) {
+        return;
+      }
       event.preventDefault();
-      openSelectedAssetFull();
+      window.dispatchEvent(new CustomEvent('asset-viewer:open-review', { detail: { path: selectedPath.value } }));
       return;
     }
     if (event.key === ' ' && selectedPath.value) {

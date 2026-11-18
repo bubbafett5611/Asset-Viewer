@@ -5,6 +5,7 @@ import { DuplicatesView } from '/vue/components/DuplicatesView.js';
 import { StatsView } from '/vue/components/StatsView.js';
 import { SettingsView } from '/vue/components/SettingsView.js';
 import { useAssetViewerState } from '/vue/useAssetViewer.js';
+import { ToastHost } from '/vue/components/ToastHost.js';
 
 createApp({
   directives: {
@@ -24,13 +25,15 @@ createApp({
     TagsView,
     DuplicatesView,
     StatsView,
-    SettingsView
+    SettingsView,
+    ToastHost
   },
   setup() {
     return useAssetViewerState();
   },
   template: `
         <div class="page">
+            <ToastHost />
             <div v-if="isDropOverlayVisible" class="drop-overlay">
                 <div class="drop-overlay-card">
                     <div class="drop-overlay-title">{{ isUploading ? 'Uploading images' : 'Drop images to upload' }}</div>
@@ -112,11 +115,12 @@ createApp({
                             <div><kbd>Arrows</kbd><span>Move media selection</span></div>
                             <div><kbd>Shift+Arrows</kbd><span>Extend media selection while moving</span></div>
                             <div><kbd>Space</kbd><span>Toggle selected media into multi-selection</span></div>
-                            <div><kbd>Enter</kbd><span>Open selected media full-size</span></div>
+                            <div><kbd>Enter</kbd><span>View selected media in the slideshow (or double-click a card)</span></div>
                             <div><kbd>Ctrl+C</kbd><span>Copy selected image to clipboard</span></div>
                             <div><kbd>Ctrl+Shift+C</kbd><span>Copy selected file path(s)</span></div>
                             <div><kbd>Ctrl+O</kbd><span>Open selected media full-size</span></div>
                             <div><kbd>Ctrl+Shift+O</kbd><span>Open containing folder</span></div>
+                            <div><kbd>F</kbd><span>Toggle favorite on selected media</span></div>
                             <div><kbd>B</kbd><span>Toggle thumbnail blur</span></div>
                             <div><kbd>Delete</kbd><span>Delete selected media</span></div>
                             <div><kbd>Shift+Delete</kbd><span>Permanently delete selected media</span></div>

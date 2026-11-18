@@ -67,6 +67,16 @@ def api_assets_move():
     return asset_api.api_assets_move_handler()
 
 
+@assets_bp.route('/api/assets/favorite', methods=['POST'])
+def api_assets_favorite():
+    return asset_api.api_assets_favorite_handler()
+
+
+@assets_bp.route('/api/assets/restore', methods=['POST'])
+def api_assets_restore():
+    return asset_api.api_assets_restore_handler()
+
+
 @assets_bp.route('/api/assets/metadata/health', methods=['GET'])
 def api_assets_metadata_health():
     return asset_api.api_assets_metadata_health_handler()

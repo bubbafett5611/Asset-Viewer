@@ -373,17 +373,34 @@ def test_asset_folders_lists_root_and_subfolders(client, asset_root):
     (asset_root / "Batch B").mkdir()
     (asset_root / ".asset_viewer_reports").mkdir()
     (asset_root / ".asset_viewer_reports" / "asset_index.sqlite").write_text("", encoding="utf-8")
+    (asset_root / "top.png").write_bytes(make_png_bytes().getvalue())
+    (asset_root / "Batch A" / "a.png").write_bytes(make_png_bytes().getvalue())
+    (asset_root / "Batch A" / "Nested" / "n1.png").write_bytes(make_png_bytes().getvalue())
+    (asset_root / "Batch A" / "Nested" / "n2.png").write_bytes(make_png_bytes().getvalue())
 
     response = client.get("/api/assets/folders?root=test")
 
     assert response.status_code == 200
     payload = response.get_json()
+    # file_count is recursive and ignores excluded report/trash folders.
     assert payload["folders"] == [
-        {"path": "", "label": "root", "depth": 0},
-        {"path": "Batch A", "label": "Batch A", "depth": 1},
-        {"path": os.path.join("Batch A", "Nested"), "label": "Nested", "depth": 2},
-        {"path": "Batch B", "label": "Batch B", "depth": 1},
+        {"path": "", "label": "root", "depth": 0, "file_count": 4},
+        {"path": "Batch A", "label": "Batch A", "depth": 1, "file_count": 3},
+        {"path": os.path.join("Batch A", "Nested"), "label": "Nested", "depth": 2, "file_count": 2},
+        {"path": "Batch B", "label": "Batch B", "depth": 1, "file_count": 0},
     ]
+
+
+def test_asset_list_reports_total_matches(client, asset_root):
+    for index in range(5):
+        (asset_root / f"item_{index}.png").write_bytes(make_png_bytes().getvalue())
+
+    response = client.get("/api/assets/list?root=test&limit=2&offset=0")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert len(payload["assets"]) == 2
+    assert payload["total"] == 5
 
 
 def test_create_folder_under_selected_folder(client, asset_root):
@@ -954,6 +971,59 @@ def test_delete_safe_mode_moves_file_to_trash(client, asset_root):
     assert payload["moved"][0]["destination"]
     assert not image_path.exists()
     assert os.path.exists(payload["moved"][0]["destination"])
+
+
+def test_undo_restores_safe_deleted_file_to_original_path(client, asset_root):
+    image_path = asset_root / "Batch" / "keep.png"
+    image_path.parent.mkdir()
+    image_path.write_bytes(make_png_bytes().getvalue())
+    moved = client.post("/bubba/assets/delete", json={"path": str(image_path), "safe_delete": True}).get_json()["moved"]
+
+    response = client.post("/api/assets/restore", json={"items": moved})
+
+    assert response.status_code == 200
+    assert response.get_json()["errors"] == []
+    assert image_path.exists()
+    assert not os.path.exists(moved[0]["destination"])
+
+
+def test_restore_rejects_sources_outside_trash(client, asset_root):
+    outside = asset_root / "not_trash.png"
+    outside.write_bytes(make_png_bytes().getvalue())
+
+    response = client.post(
+        "/api/assets/restore",
+        json={"items": [{"path": str(asset_root / "copy.png"), "destination": str(outside)}]},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["restored"] == []
+    assert outside.exists()
+    assert not (asset_root / "copy.png").exists()
+
+
+def test_favorites_flag_filter_and_follow_moves(client, asset_root):
+    (asset_root / "Dest").mkdir()
+    for name in ("a.png", "b.png", "c.png"):
+        (asset_root / name).write_bytes(make_png_bytes().getvalue())
+    client.get("/api/assets/list?root=test")  # build the index
+    starred = str(asset_root / "b.png")
+
+    assert client.post("/api/assets/favorite", json={"paths": [starred], "favorite": True}).status_code == 200
+
+    listed = client.get("/api/assets/list?root=test&sort_by=name&sort_dir=asc").get_json()["assets"]
+    assert [item.get("favorite", False) for item in listed] == [False, True, False]
+    favorites = client.get("/api/assets/list?root=test&favorites=1").get_json()
+    assert [item["name"] for item in favorites["assets"]] == ["b.png"]
+    assert favorites["total"] == 1
+    assert client.get(f"/api/assets/details?path={starred}").get_json()["asset"]["favorite"] is True
+
+    client.post("/api/assets/move", json={"root": "test", "folder": "Dest", "paths": [starred]})
+    moved = client.get("/api/assets/list?root=test&favorites=1").get_json()["assets"]
+    assert [item["relative_path"] for item in moved] == [os.path.join("Dest", "b.png")]
+
+    client.post("/api/assets/favorite", json={"paths": [moved[0]["path"]], "favorite": False})
+    assert client.get("/api/assets/list?root=test&favorites=1").get_json()["assets"] == []
 
 
 def test_tags_are_paged_and_search_normalizes_spaces(tmp_path, monkeypatch):

@@ -6,6 +6,8 @@ export const API = {
   list: '/api/assets/list',
   folders: '/api/assets/folders',
   move: '/api/assets/move',
+  favorite: '/api/assets/favorite',
+  restore: '/api/assets/restore',
   duplicates: '/api/assets/duplicates',
   duplicatesStream: '/api/assets/duplicates/stream',
   duplicatesTaskStatus: '/api/assets/duplicates/tasks',
