@@ -6,6 +6,7 @@ import { StatsView } from '/vue/components/StatsView.js';
 import { SettingsView } from '/vue/components/SettingsView.js';
 import { useAssetViewerState } from '/vue/useAssetViewer.js';
 import { ToastHost } from '/vue/components/ToastHost.js';
+import { MetadataDiff } from '/vue/components/MetadataDiff.js';
 
 createApp({
   directives: {
@@ -26,7 +27,8 @@ createApp({
     DuplicatesView,
     StatsView,
     SettingsView,
-    ToastHost
+    ToastHost,
+    MetadataDiff
   },
   setup() {
     return useAssetViewerState();
@@ -88,6 +90,7 @@ createApp({
                             @keydown="nudgeCompareDivider"
                         ></button>
                     </div>
+                    <MetadataDiff :left="compareLeft" :right="compareRight" />
                 </div>
             </dialog>
 

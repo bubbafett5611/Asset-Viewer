@@ -1,6 +1,8 @@
-import { computed } from '/vendor/vue.esm-browser.prod.js';
+import { computed, inject } from '/vendor/vue.esm-browser.prod.js';
 import { formatBytes, formatDate } from '/vue/formatters.js';
 import { fileUrl } from '/vue/api.js';
+import { buildMetadataSummary } from '/vue/metadataFields.js';
+import { LIBRARY_KEY, searchToken } from '/vue/composables/useLibraryExtras.js';
 
 export const AssetDetailsPanel = {
   name: 'AssetDetailsPanel',
@@ -26,223 +28,7 @@ export const AssetDetailsPanel = {
       videoExtensions.has(String(props.selectedAsset?.extension || '').toLowerCase())
     );
 
-    const hasValue = (value) => {
-      if (value === null || value === undefined) {
-        return false;
-      }
-      if (typeof value === 'string') {
-        return value.trim().length > 0;
-      }
-      if (Array.isArray(value)) {
-        return value.length > 0;
-      }
-      return true;
-    };
-
-    const metadataSummary = computed(() => {
-      if (!props.selectedAsset) {
-        return {
-          filePairs: [],
-          generationPairs: [],
-          extraBubbaPairs: [],
-          metadataPairs: [],
-          metadataBadgeClass: 'metadata-status metadata-status-none',
-          metadataBadgeText: 'No metadata detected',
-          copyPromptValue: '',
-          copySeedValue: ''
-        };
-      }
-
-      const details =
-        props.assetDetails && typeof props.assetDetails === 'object' ? props.assetDetails : props.selectedAsset;
-      const metadata = details.metadata && typeof details.metadata === 'object' ? details.metadata : {};
-      const embedded = metadata.metadata && typeof metadata.metadata === 'object' ? metadata.metadata : {};
-      const bubbaMetadata =
-        embedded.bubba_metadata && typeof embedded.bubba_metadata === 'object' ? embedded.bubba_metadata : null;
-      const extractedGeneration =
-        embedded.generation && typeof embedded.generation === 'object' ? embedded.generation : null;
-      const generationSource = bubbaMetadata || extractedGeneration;
-
-      const filePairs = [
-        ['name', details.name],
-        ['path', details.path],
-        ['relative', details.relative_path],
-        ['extension', details.extension || '(none)'],
-        ['size', formatBytes(details.size_bytes)],
-        ['modified', formatDate(details.modified_ts)]
-      ];
-
-      const generationPairs = [];
-      if (generationSource) {
-        const addGenerationField = (label, key) => {
-          if (Object.prototype.hasOwnProperty.call(generationSource, key) && hasValue(generationSource[key])) {
-            const value = generationSource[key];
-            generationPairs.push([
-              label,
-              Array.isArray(value)
-                ? value.join(', ')
-                : typeof value === 'string'
-                  ? value
-                  : JSON.stringify(value, null, 2)
-            ]);
-          }
-        };
-
-        const addGenerationFieldFromKeys = (label, keys) => {
-          for (const key of keys) {
-            if (Object.prototype.hasOwnProperty.call(generationSource, key) && hasValue(generationSource[key])) {
-              addGenerationField(label, key);
-              return;
-            }
-          }
-        };
-
-        addGenerationFieldFromKeys('model', [
-          'model_name',
-          'model',
-          'ckpt_name',
-          'checkpoint',
-          'checkpoint_name',
-          'sd_model_name',
-          'base_model'
-        ]);
-        addGenerationFieldFromKeys('seed', ['seed', 'seeds']);
-        addGenerationFieldFromKeys('steps', ['steps', 'num_steps']);
-        addGenerationFieldFromKeys('clip_skip', ['clip_skip']);
-        addGenerationFieldFromKeys('cfg', ['cfg', 'cfg_scale']);
-        addGenerationFieldFromKeys('sampler', ['sampler_name', 'sampler']);
-        addGenerationFieldFromKeys('scheduler', ['scheduler']);
-        addGenerationFieldFromKeys('denoise', ['denoise', 'denoise_strength']);
-        addGenerationFieldFromKeys('time_seconds', ['sampler_time_seconds', 'time_seconds']);
-        const loraNames = Array.isArray(generationSource.loras) ? generationSource.loras : [];
-        const loraStrengths = Array.isArray(generationSource.lora_strengths) ? generationSource.lora_strengths : [];
-        if (loraNames.length && loraStrengths.length) {
-          const loraChips = loraNames.map((name, index) => {
-            const [modelStrength, clipStrength] = loraStrengths[index] || [1, 1];
-            return {
-              label: `${name} (${modelStrength === clipStrength ? modelStrength : `${modelStrength}/${clipStrength}`})`,
-              value: String(name)
-            };
-          });
-          generationPairs.push(['loras', loraChips.map((chip) => chip.label).join(', '), loraChips]);
-        } else {
-          addGenerationFieldFromKeys('loras', ['loras']);
-        }
-        addGenerationFieldFromKeys('vae', ['vae_name']);
-        addGenerationFieldFromKeys('clip', ['clip_name']);
-        if (generationSource.width > 0 && generationSource.height > 0) {
-          generationPairs.push(['size', `${generationSource.width}x${generationSource.height}`]);
-        }
-        addGenerationFieldFromKeys('sampler_info', ['sampler_info']);
-        addGenerationFieldFromKeys('positive_prompt', ['positive_prompt', 'prompt']);
-        addGenerationFieldFromKeys('negative_prompt', ['negative_prompt', 'negative']);
-        addGenerationFieldFromKeys('prompt_sections', ['prompt_sections']);
-        const xySweep = /^XY sweep (.+)$/.exec(String(generationSource.notes || '').trim());
-        if (xySweep) {
-          const [xAxis, yAxis] = xySweep[1].split(' | ');
-          generationPairs.push(['xy_sweep_x', xAxis]);
-          if (yAxis) {
-            generationPairs.push(['xy_sweep_y', yAxis]);
-          }
-        } else {
-          addGenerationFieldFromKeys('notes', ['notes']);
-        }
-        addGenerationFieldFromKeys('save_prefix', ['save_prefix']);
-        addGenerationFieldFromKeys('filepath', ['filepath', 'file', 'path']);
-      }
-
-      // Values that make useful "find all media like this" searches become clickable chips.
-      const filterableLabels = new Set(['model', 'seed', 'sampler', 'scheduler', 'vae', 'clip']);
-      for (const pair of generationPairs) {
-        if (pair[2] || !filterableLabels.has(pair[0])) {
-          continue;
-        }
-        const value = String(pair[1] || '').trim();
-        if (value && value.length <= 200 && !value.includes('\n')) {
-          pair[2] = [{ label: value, value }];
-        }
-      }
-
-      const extraBubbaPairs = [];
-      if (bubbaMetadata) {
-        const known = new Set([
-          'model_name',
-          'clip_skip',
-          'seed',
-          'steps',
-          'cfg',
-          'sampler_name',
-          'scheduler',
-          'denoise',
-          'sampler_time_seconds',
-          'sampler_info',
-          'positive_prompt',
-          'negative_prompt',
-          'loras',
-          'lora_strengths',
-          'vae_name',
-          'clip_name',
-          'width',
-          'height',
-          'notes',
-          'save_prefix',
-          'prompt_sections',
-          'filepath'
-        ]);
-
-        for (const [key, value] of Object.entries(bubbaMetadata)) {
-          if (known.has(key) || !hasValue(value)) {
-            continue;
-          }
-          extraBubbaPairs.push([`bubba.${key}`, typeof value === 'string' ? value : JSON.stringify(value, null, 2)]);
-        }
-      }
-
-      const metadataPairs = [];
-      if (metadata.format) {
-        metadataPairs.push(['format', metadata.format]);
-      }
-      if (Array.isArray(metadata.keys)) {
-        metadataPairs.push(['keys', metadata.keys.join(', ') || '(none)']);
-      }
-      if (embedded && typeof embedded === 'object') {
-        for (const [key, value] of Object.entries(embedded)) {
-          if (key === 'bubba_metadata') {
-            continue;
-          }
-          metadataPairs.push([key, typeof value === 'string' ? value : JSON.stringify(value, null, 2)]);
-        }
-      }
-
-      const hasGenerationData = generationPairs.length > 0;
-      const hasAnyMetadata = hasGenerationData || metadataPairs.length > 0;
-
-      const metadataBadgeClass = hasGenerationData
-        ? 'metadata-status metadata-status-ok'
-        : hasAnyMetadata
-          ? 'metadata-status metadata-status-warn'
-          : 'metadata-status metadata-status-none';
-      const metadataBadgeText = hasGenerationData
-        ? 'Generation data detected'
-        : hasAnyMetadata
-          ? 'Metadata found (no generation)'
-          : 'No metadata detected';
-
-      const copyPromptValue =
-        generationSource && hasValue(generationSource.positive_prompt) ? String(generationSource.positive_prompt) : '';
-      const copySeedValue = generationSource && hasValue(generationSource.seed) ? String(generationSource.seed) : '';
-
-      return {
-        filePairs,
-        generationPairs,
-        extraBubbaPairs,
-        metadataPairs,
-        metadataBadgeClass,
-        metadataBadgeText,
-        copyPromptValue,
-        copySeedValue
-      };
-    });
+    const metadataSummary = computed(() => buildMetadataSummary(props.selectedAsset, props.assetDetails));
 
     const openFull = () => {
       if (!props.selectedAsset) {
@@ -262,9 +48,33 @@ export const AssetDetailsPanel = {
       }
     };
 
+    const library = inject(LIBRARY_KEY, null);
+    const CHIP_FIELDS = { model: 'model', seed: 'seed', sampler: 'sampler', scheduler: 'scheduler', loras: 'lora' };
+    const chipQuery = (label, value) => {
+      if (!CHIP_FIELDS[label]) return String(value);
+      const clean =
+        label === 'loras'
+          ? String(value)
+              .split(/[\\/]/)
+              .pop()
+              .replace(/\.(safetensors|ckpt|pt|pth)$/i, '')
+          : value;
+      return searchToken(CHIP_FIELDS[label], clean, { exact: label !== 'seed' });
+    };
+    const hasWorkflow = computed(() => {
+      const badges = props.assetDetails?.metadata_badges || props.selectedAsset?.metadata_badges || [];
+      return (
+        String(props.selectedAsset?.extension || '').toLowerCase() === '.png' &&
+        badges.some((badge) => badge?.key === 'workflow')
+      );
+    });
+
     const isFavorite = computed(() => Boolean(props.assetDetails?.favorite ?? props.selectedAsset?.favorite));
 
     return {
+      library,
+      chipQuery,
+      hasWorkflow,
       isFavorite,
       fileUrl,
       formatBytes,
@@ -310,6 +120,15 @@ export const AssetDetailsPanel = {
                         title="Toggle favorite (F)"
                         @click="$emit('toggle-favorite', selectedAsset)"
                     >{{ isFavorite ? '★ Favorited' : '☆ Favorite' }}</button>
+                    <button v-if="library && isPreviewableAsset" type="button" class="preview-action" title="Show visually similar images from this library" @click="library.findSimilar(selectedAsset)">≈ Find similar</button>
+                    <button
+                        v-if="library"
+                        type="button"
+                        class="preview-action preview-action-comfy"
+                        :disabled="!hasWorkflow || library.comfyBusy"
+                        :title="hasWorkflow ? 'Queue the embedded workflow in ComfyUI again (same seed)' : 'No embedded ComfyUI workflow in this image'"
+                        @click="library.queueInComfy(selectedAsset)"
+                    >{{ library.comfyBusy ? 'Queuing…' : '↻ Re-queue in ComfyUI' }}</button>
                     <button type="button" class="preview-action" @click="openFull">Open full size</button>
                     <button type="button" class="preview-action" @click="$emit('open-folder', selectedAsset)">Open folder</button>
                     <button type="button" class="preview-action" @click="copyText(selectedAsset.path)">Copy path</button>
@@ -357,7 +176,7 @@ export const AssetDetailsPanel = {
                                     type="button"
                                     class="kv-filter-chip"
                                     :title="'Show all media matching ' + chip.value"
-                                    @click="$emit('filter-by', chip.value)"
+                                    @click="$emit('filter-by', chipQuery(pair[0], chip.value))"
                                 >
                                     <span>{{ chip.label }}</span>
                                     <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10.2 10.2 13.5 13.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>

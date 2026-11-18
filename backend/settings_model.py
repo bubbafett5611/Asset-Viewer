@@ -51,6 +51,14 @@ class UpdateSettings(BaseModel):
 	)
 
 
+class IntegrationSettings(BaseModel):
+	comfyui_url: str = Field(
+		default="http://127.0.0.1:8188",
+		title="ComfyUI URL",
+		description="Where Re-queue in ComfyUI sends workflows (the address ComfyUI is listening on).",
+	)
+
+
 class Settings(BaseSettings):
 	model_config = SettingsConfigDict(
 		env_prefix="BUBBA_ASSET_VIEWER_",
@@ -62,6 +70,7 @@ class Settings(BaseSettings):
 	general: GeneralSettings = Field(default_factory=GeneralSettings, title="General")
 	viewer: ViewerSettings = Field(default_factory=ViewerSettings, title="Viewer")
 	updates: UpdateSettings = Field(default_factory=UpdateSettings, title="Updates")
+	integrations: IntegrationSettings = Field(default_factory=IntegrationSettings, title="Integrations")
 
 	@classmethod
 	def settings_customise_sources(

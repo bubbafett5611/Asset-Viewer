@@ -11,6 +11,7 @@ import { useViewerLayout } from '/vue/composables/useViewerLayout.js';
 import { useViewerLifecycle } from '/vue/composables/useViewerLifecycle.js';
 import { useViewerProps } from '/vue/composables/useViewerProps.js';
 import { showToast } from '/vue/components/ToastHost.js';
+import { useLibraryExtras } from '/vue/composables/useLibraryExtras.js';
 
 const FAVORITES_KEY = 'bubba_asset_viewer_tag_favorites';
 const RECENT_KEY = 'bubba_asset_viewer_tag_recent';
@@ -217,6 +218,7 @@ export function useAssetViewerState() {
   const safeDelete = ref(true);
   const hasMore = ref(false);
   const assetTotal = ref(null);
+  const listServerTime = ref(0);
   const blurThumbnails = ref(false);
   const isDropOverlayVisible = ref(false);
   const isDeleteConfirmVisible = ref(false);
@@ -302,6 +304,9 @@ export function useAssetViewerState() {
     ext: '',
     metadataBadge: '',
     favorites: '',
+    collection: '',
+    similarTo: '',
+    similarToName: '',
     sortBy: ['name', 'extension', 'modified', 'size', 'metadata'].includes(savedSettings.sortBy)
       ? savedSettings.sortBy
       : 'modified',
@@ -549,6 +554,7 @@ export function useAssetViewerState() {
     filters.ext = '';
     filters.metadataBadge = '';
     filters.favorites = '';
+    filters.similarTo = '';
   }
 
   function retryAssets() {
@@ -928,6 +934,7 @@ export function useAssetViewerState() {
     safeDelete,
     hasMore,
     assetTotal,
+    listServerTime,
     notify: showToast,
     blurThumbnails,
     isDropOverlayVisible,
@@ -943,6 +950,16 @@ export function useAssetViewerState() {
     onSelectAsset: async (asset) => {
       await selectAsset(asset);
     }
+  });
+
+  const library = useLibraryExtras({
+    filters,
+    activeTab,
+    assets,
+    listServerTime,
+    refreshAssets,
+    fetchFolders,
+    assetListRef
   });
 
   function onAssetListScrollWithAutoLoad() {

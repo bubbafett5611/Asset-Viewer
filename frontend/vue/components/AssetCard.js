@@ -20,6 +20,10 @@ export const AssetCard = {
     blurEnabled: {
       type: Boolean,
       default: false
+    },
+    dayLabel: {
+      type: String,
+      default: ''
     }
   },
   emits: ['select', 'open', 'favorite', 'drag-start', 'drag-end'],
@@ -72,7 +76,7 @@ export const AssetCard = {
     };
   },
   template: `
-        <div class="asset-card-shell" :class="{ 'is-favorite': asset.favorite }">
+        <div class="asset-card-shell" :class="{ 'is-favorite': asset.favorite }" :data-modified="asset.modified_ts">
         <button
             class="asset-card"
             draggable="true"
@@ -107,6 +111,8 @@ export const AssetCard = {
                     @error="markThumbFailed"
                 ></video>
                 <span v-if="isVideo(asset)" class="asset-video-indicator" aria-hidden="true">&#9654;</span>
+                <span v-if="asset.similarity !== undefined" class="asset-top-marker asset-top-marker--similar" :title="asset.similarity + '% visually similar'">≈ {{ asset.similarity }}%</span>
+                <span v-else-if="dayLabel" class="asset-top-marker">{{ dayLabel }}</span>
                 <div class="asset-thumb-fallback">
                     <span>{{ isPreviewable(asset) || isVideo(asset) ? 'Preview unavailable' : 'No media preview' }}</span>
                 </div>

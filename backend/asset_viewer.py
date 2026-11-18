@@ -949,6 +949,8 @@ def list_indexed_assets(
 	folder: str = "",
 	stats: dict[str, Any] | None = None,
 	favorites_only: bool = False,
+	collection_id: int | None = None,
+	similar_to: str = "",
 ) -> list[dict[str, Any]] | None:
 	from services.asset_index import list_indexed_assets as _list_indexed_assets
 
@@ -971,6 +973,8 @@ def list_indexed_assets(
 		folder=folder,
 		stats=stats,
 		favorites_only=favorites_only,
+		collection_id=collection_id,
+		similar_to=similar_to,
 	)
 
 

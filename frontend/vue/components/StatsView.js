@@ -1,5 +1,8 @@
+import { LibraryInsights } from '/vue/components/LibraryInsights.js';
+
 export const StatsView = {
   name: 'StatsView',
+  components: { LibraryInsights },
   props: {
     layoutStyle: {
       type: Object,
@@ -57,6 +60,7 @@ export const StatsView = {
                 </div>
 
                 <div class="stats-content">
+                    <LibraryInsights />
                     <div v-if="!statsRootReports.length" class="stats-empty">No roots configured.</div>
                     <article v-for="report in statsRootReports" :key="report.key" class="stats-root">
                         <div class="stats-root-header">

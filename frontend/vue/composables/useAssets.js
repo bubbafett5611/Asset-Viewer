@@ -25,6 +25,7 @@ export function useAssets(options) {
     safeDelete,
     hasMore,
     assetTotal,
+    listServerTime,
     notify,
     blurThumbnails,
     isDropOverlayVisible,
@@ -51,6 +52,8 @@ export function useAssets(options) {
       filters.ext,
       filters.metadataBadge,
       filters.favorites,
+      filters.collection,
+      filters.similarTo,
       filters.sortBy,
       filters.sortDir
     ]);
@@ -76,7 +79,9 @@ export function useAssets(options) {
     isLoading.value = !append;
     isLoadingMore.value = append;
     if (!append) {
-      statusText.value = 'Loading media...';
+      statusText.value = filters.similarTo
+        ? 'Finding similar images… (the first search in a library hashes images and can take a while)'
+        : 'Loading media...';
     }
 
     try {
@@ -89,6 +94,8 @@ export function useAssets(options) {
         sort_dir: filters.sortDir,
         metadata_badges: filters.metadataBadge,
         favorites: filters.favorites,
+        collection: filters.collection,
+        similar_to: filters.similarTo,
         limit: pageSize,
         offset: nextOffset,
         refresh_index: refreshIndex ? 'true' : ''
@@ -109,7 +116,12 @@ export function useAssets(options) {
       const total = Number.isFinite(payload.total) ? payload.total : null;
       if (assetTotal) assetTotal.value = total;
       hasMore.value = total === null ? incoming.length === pageSize : assets.value.length < total;
-      statusText.value = describeLoadedCount(assets.value.length, total);
+      statusText.value = filters.similarTo
+        ? `${total ?? assets.value.length} visually similar ${(total ?? assets.value.length) === 1 ? 'image' : 'images'}, closest first.`
+        : describeLoadedCount(assets.value.length, total);
+      if (!append && listServerTime && Number.isFinite(payload.server_time)) {
+        listServerTime.value = payload.server_time;
+      }
 
       if (!append && !keepSelection) {
         selectedAsset.value = null;

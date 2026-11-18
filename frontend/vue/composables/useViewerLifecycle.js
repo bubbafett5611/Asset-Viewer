@@ -75,6 +75,8 @@ export function useViewerLifecycle(options) {
       filters.ext,
       filters.metadataBadge,
       filters.favorites,
+      filters.collection,
+      filters.similarTo,
       filters.sortBy,
       filters.sortDir
     ],

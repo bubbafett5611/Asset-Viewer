@@ -67,6 +67,46 @@ def api_assets_move():
     return asset_api.api_assets_move_handler()
 
 
+@assets_bp.route('/api/assets/changes', methods=['GET'])
+def api_assets_changes():
+    return asset_api.api_assets_changes_handler()
+
+
+@assets_bp.route('/api/assets/facets', methods=['GET'])
+def api_assets_facets():
+    return asset_api.api_assets_facets_handler()
+
+
+@assets_bp.route('/api/collections', methods=['GET'])
+def api_collections_list():
+    return asset_api.api_collections_list_handler()
+
+
+@assets_bp.route('/api/collections', methods=['POST'])
+def api_collections_create():
+    return asset_api.api_collections_create_handler()
+
+
+@assets_bp.route('/api/collections/<int:collection_id>/items', methods=['POST'])
+def api_collection_items(collection_id):
+    return asset_api.api_collection_items_handler(collection_id)
+
+
+@assets_bp.route('/api/collections/<int:collection_id>', methods=['PATCH'])
+def api_collection_update(collection_id):
+    return asset_api.api_collection_update_handler(collection_id)
+
+
+@assets_bp.route('/api/collections/<int:collection_id>', methods=['DELETE'])
+def api_collection_delete(collection_id):
+    return asset_api.api_collection_delete_handler(collection_id)
+
+
+@assets_bp.route('/api/comfy/queue', methods=['POST'])
+def api_comfy_queue():
+    return asset_api.api_comfy_queue_handler()
+
+
 @assets_bp.route('/api/assets/favorite', methods=['POST'])
 def api_assets_favorite():
     return asset_api.api_assets_favorite_handler()

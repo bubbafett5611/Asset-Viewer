@@ -9,6 +9,7 @@ import time
 from typing import Any, Callable
 
 from runtime_paths import asset_index_cache_file
+from services.asset_query import build_facets, generation_fields, parse_query, row_matches
 from services.asset_viewer_scanning import _flatten_to_search_text
 
 
@@ -87,6 +88,7 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
         )
         """
     )
+    _ensure_collection_schema(connection)
     connection.execute("CREATE INDEX IF NOT EXISTS idx_assets_root_name ON assets(root, name, relative_path)")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_assets_root_modified ON assets(root, modified_ts)")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_assets_root_size ON assets(root, size_bytes)")
@@ -365,11 +367,16 @@ def list_indexed_assets(
     folder: str = "",
     stats: dict[str, Any] | None = None,
     favorites_only: bool = False,
+    collection_id: int | None = None,
+    similar_to: str = "",
 ) -> list[dict[str, Any]] | None:
     normalized_root = os.path.abspath(root)
     db_path = asset_index_cache_file(normalized_root)
     if not db_path.exists():
         return None
+    parsed_query = parse_query(query) if search_in_metadata else None
+    if parsed_query is not None and parsed_query.favorites_only:
+        favorites_only = True
 
     request_state = _normalize_request(
         extensions,
@@ -398,13 +405,29 @@ def list_indexed_assets(
                 str(fav["path"])
                 for fav in connection.execute("SELECT path FROM favorites WHERE root = ?", (normalized_root,))
             }
+            collection_paths: set[str] | None = None
+            if collection_id is not None:
+                collection_paths = {
+                    str(item["path"])
+                    for item in connection.execute(
+                        "SELECT path FROM collection_items WHERE collection_id = ?", (int(collection_id),)
+                    )
+                }
     except sqlite3.Error:
         return None
+
+    similarity: dict[str, int] | None = None
+    if similar_to:
+        similarity = _similarity_distances(normalized_root, similar_to, rows, runtime)
 
     items: list[dict[str, Any]] = []
     for row in rows:
         is_favorite = str(row["path"]) in favorite_paths
         if favorites_only and not is_favorite:
+            continue
+        if collection_paths is not None and str(row["path"]) not in collection_paths:
+            continue
+        if similarity is not None and str(row["path"]) not in similarity:
             continue
         extension = str(row["extension"] or "").lower()
         requested_folder = request_state["requested_folder"]
@@ -415,10 +438,15 @@ def list_indexed_assets(
         if request_state["requested_exts"] and extension not in request_state["requested_exts"]:
             continue
 
-        if q:
+        if parsed_query is not None and not parsed_query.is_empty:
+            generation = (
+                generation_fields(_json_loads(row["metadata_json"], {})) if parsed_query.needs_generation else None
+            )
+            if not row_matches(parsed_query, dict(row), str(row["search_text"] or ""), generation):
+                continue
+        elif q and parsed_query is None:
             base_blob = f"{row['name']} {row['relative_path']}".lower()
-            searchable_blob = row["search_text"] if search_in_metadata else base_blob
-            if q not in searchable_blob:
+            if q not in base_blob:
                 continue
 
         size_bytes = int(row["size_bytes"])
@@ -447,12 +475,20 @@ def list_indexed_assets(
         item = _item_from_row(row, include_metadata=include_metadata)
         if is_favorite:
             item["favorite"] = True
+        if similarity is not None:
+            # 64-bit dHash: 0 bits apart = identical; express as a 0-100 similarity score.
+            item["similarity"] = round(100 * (1 - similarity[str(row["path"])] / 64))
         items.append(item)
 
-    items.sort(
-        key=lambda item: _sort_key(request_state["requested_sort_by"], item),
-        reverse=request_state["requested_sort_dir"] == "desc",
-    )
+    if similarity is not None:
+        target_abs = os.path.abspath(similar_to)
+        # The source image leads, then closest first, newest first among ties.
+        items.sort(key=lambda item: (item["path"] != target_abs, similarity[item["path"]], -item["modified_ts"]))
+    else:
+        items.sort(
+            key=lambda item: _sort_key(request_state["requested_sort_by"], item),
+            reverse=request_state["requested_sort_dir"] == "desc",
+        )
     if stats is not None:
         stats["total"] = len(items)
     return items[request_state["offset"] : request_state["offset"] + request_state["limit"]]
@@ -581,7 +617,7 @@ def is_asset_favorite(root: str, path: str) -> bool:
 
 
 def move_asset_favorite(root: str, old_path: str, new_path: str) -> None:
-    """Keep a favorite attached to a file after it is moved or restored."""
+    """Keep favorites and collection membership attached to a file after it is moved or restored."""
     normalized_root = os.path.abspath(root)
     if not asset_index_cache_file(normalized_root).exists():
         return
@@ -589,6 +625,10 @@ def move_asset_favorite(root: str, old_path: str, new_path: str) -> None:
         _ensure_schema(connection)
         connection.execute(
             "UPDATE OR REPLACE favorites SET path = ? WHERE path = ?",
+            (os.path.abspath(new_path), os.path.abspath(old_path)),
+        )
+        connection.execute(
+            "UPDATE OR REPLACE collection_items SET path = ? WHERE path = ?",
             (os.path.abspath(new_path), os.path.abspath(old_path)),
         )
         connection.commit()
@@ -624,3 +664,201 @@ def list_asset_folders(root: str) -> list[dict[str, Any]]:
         parent = by_path.get(os.path.dirname(folder["path"]), root_folder)
         parent["file_count"] += folder["file_count"]
     return folders
+
+
+SIMILAR_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
+SIMILAR_MAX_DISTANCE = 20  # of 64 dHash bits; ~69% similarity and up
+SIMILAR_MAX_NEW_HASHES = 2500  # bound first-run work; later runs reuse cached hashes
+
+
+def _similarity_distances(root: str, target_path: str, rows: list[sqlite3.Row], runtime: AssetIndexRuntime) -> dict[str, int]:
+    """Hamming distance from the target image's dHash to every visually close image in the root."""
+    from PIL import Image
+
+    from services.asset_viewer_duplicates import _dhash
+
+    target_abs = os.path.abspath(target_path)
+    hashes: dict[str, int] = {}
+    pending: list[str] = []
+    for row in rows:
+        path = str(row["path"])
+        if str(row["extension"] or "").lower() not in SIMILAR_IMAGE_EXTENSIONS:
+            continue
+        if row["dhash"]:
+            try:
+                hashes[path] = int(row["dhash"])
+                continue
+            except ValueError:
+                pass
+        pending.append(path)
+
+    if target_abs in pending:
+        pending.remove(target_abs)
+        pending.insert(0, target_abs)
+    computed: dict[str, int] = {}
+    for path in pending[:SIMILAR_MAX_NEW_HASHES]:
+        value = _dhash(path, image_module=Image)
+        if value is not None:
+            hashes[path] = value
+            computed[path] = value
+    if computed:
+        try:
+            with _connect(root) as connection:
+                connection.executemany(
+                    "UPDATE assets SET dhash = ? WHERE root = ? AND path = ?",
+                    [(str(value), root, path) for path, value in computed.items()],
+                )
+                connection.commit()
+        except sqlite3.Error:
+            pass
+
+    target_hash = hashes.get(target_abs)
+    if target_hash is None:
+        return {}
+    distances = {}
+    for path, value in hashes.items():
+        distance = (value ^ target_hash).bit_count()
+        if distance <= SIMILAR_MAX_DISTANCE:
+            distances[path] = distance
+    return distances
+
+
+def _ensure_collection_schema(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS collections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            root TEXT NOT NULL,
+            name TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            UNIQUE(root, name)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS collection_items (
+            collection_id INTEGER NOT NULL,
+            path TEXT NOT NULL,
+            added_at REAL NOT NULL,
+            PRIMARY KEY (collection_id, path)
+        )
+        """
+    )
+
+
+def _clean_collection_name(name: str) -> str:
+    clean = " ".join(str(name or "").split())[:80]
+    if not clean:
+        raise ValueError("Collection name is required.")
+    return clean
+
+
+def list_collections(root: str) -> list[dict[str, Any]]:
+    normalized_root = os.path.abspath(root)
+    with _connect(normalized_root) as connection:
+        _ensure_schema(connection)
+        rows = connection.execute(
+            """
+            SELECT c.id, c.name, COUNT(a.path) AS item_count
+            FROM collections c
+            LEFT JOIN collection_items i ON i.collection_id = c.id
+            LEFT JOIN assets a ON a.path = i.path AND a.root = c.root
+            WHERE c.root = ?
+            GROUP BY c.id
+            ORDER BY LOWER(c.name)
+            """,
+            (normalized_root,),
+        ).fetchall()
+    return [{"id": int(row["id"]), "name": row["name"], "count": int(row["item_count"])} for row in rows]
+
+
+def create_collection(root: str, name: str) -> dict[str, Any]:
+    normalized_root = os.path.abspath(root)
+    clean = _clean_collection_name(name)
+    with _connect(normalized_root) as connection:
+        _ensure_schema(connection)
+        existing = connection.execute(
+            "SELECT id FROM collections WHERE root = ? AND name = ?", (normalized_root, clean)
+        ).fetchone()
+        if existing:
+            return {"id": int(existing["id"]), "name": clean, "created": False}
+        cursor = connection.execute(
+            "INSERT INTO collections(root, name, created_at) VALUES (?, ?, ?)", (normalized_root, clean, time.time())
+        )
+        connection.commit()
+        return {"id": int(cursor.lastrowid), "name": clean, "created": True}
+
+
+def _require_collection(connection: sqlite3.Connection, root: str, collection_id: int) -> None:
+    row = connection.execute("SELECT 1 FROM collections WHERE id = ? AND root = ?", (int(collection_id), root)).fetchone()
+    if row is None:
+        raise LookupError("Collection not found.")
+
+
+def update_collection_items(root: str, collection_id: int, paths: list[str], add: bool) -> int:
+    normalized_root = os.path.abspath(root)
+    abs_paths = [os.path.abspath(path) for path in paths]
+    with _connect(normalized_root) as connection:
+        _ensure_schema(connection)
+        _require_collection(connection, normalized_root, collection_id)
+        if add:
+            connection.executemany(
+                "INSERT OR IGNORE INTO collection_items(collection_id, path, added_at) VALUES (?, ?, ?)",
+                [(int(collection_id), path, time.time()) for path in abs_paths],
+            )
+        else:
+            connection.executemany(
+                "DELETE FROM collection_items WHERE collection_id = ? AND path = ?",
+                [(int(collection_id), path) for path in abs_paths],
+            )
+        connection.commit()
+    return len(abs_paths)
+
+
+def rename_collection(root: str, collection_id: int, name: str) -> None:
+    normalized_root = os.path.abspath(root)
+    clean = _clean_collection_name(name)
+    with _connect(normalized_root) as connection:
+        _ensure_schema(connection)
+        _require_collection(connection, normalized_root, collection_id)
+        connection.execute("UPDATE collections SET name = ? WHERE id = ?", (clean, int(collection_id)))
+        connection.commit()
+
+
+def delete_collection(root: str, collection_id: int) -> None:
+    normalized_root = os.path.abspath(root)
+    with _connect(normalized_root) as connection:
+        _ensure_schema(connection)
+        _require_collection(connection, normalized_root, collection_id)
+        connection.execute("DELETE FROM collection_items WHERE collection_id = ?", (int(collection_id),))
+        connection.execute("DELETE FROM collections WHERE id = ?", (int(collection_id),))
+        connection.commit()
+
+
+def asset_facets(root: str, folder: str = "") -> dict[str, Any] | None:
+    normalized_root = os.path.abspath(root)
+    if not asset_index_cache_file(normalized_root).exists():
+        return None
+    requested_folder = os.path.normpath(folder) if folder else ""
+    try:
+        with _connect(normalized_root) as connection:
+            _ensure_schema(connection)
+            rows = connection.execute(
+                "SELECT relative_path, modified_ts, metadata_json FROM assets WHERE root = ?", (normalized_root,)
+            ).fetchall()
+    except sqlite3.Error:
+        return None
+    prepared = []
+    for row in rows:
+        if requested_folder:
+            rel_parent = os.path.dirname(str(row["relative_path"] or ""))
+            if rel_parent != requested_folder and not rel_parent.startswith(requested_folder + os.sep):
+                continue
+        prepared.append(
+            {
+                "modified_ts": row["modified_ts"],
+                "generation": generation_fields(_json_loads(row["metadata_json"], {})),
+            }
+        )
+    return build_facets(prepared)

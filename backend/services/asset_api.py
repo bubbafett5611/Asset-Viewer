@@ -6,6 +6,11 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+import time
+import json
+import urllib.error
+import urllib.request
 from io import BytesIO
 from pathlib import Path
 
@@ -39,6 +44,14 @@ from asset_viewer import (
 from flask import Response, abort, jsonify, request, send_file, stream_with_context
 
 from services.app_context import _get_asset_roots_snapshot, logger
+from services.asset_index import (
+    asset_facets,
+    create_collection,
+    delete_collection,
+    list_collections,
+    rename_collection,
+    update_collection_items,
+)
 from services.duplicate_scan_tasks import (
     create_duplicate_scan_task,
     get_duplicate_scan_task,
@@ -175,6 +188,12 @@ def api_assets_list_handler():
     modified_after_ts = request.args.get('modified_after_ts')
     metadata_mode = request.args.get('metadata_mode', 'all')
     favorites_only = request.args.get('favorites', '').lower() in {'1', 'true', 'yes'}
+    server_time = time.time()
+    try:
+        collection_id = int(request.args['collection']) if request.args.get('collection') else None
+    except ValueError:
+        abort(400, 'Invalid collection')
+    similar_to = request.args.get('similar_to', '')
     metadata_badges = [item.strip() for item in request.args.get('metadata_badges', '').split(',') if item.strip()]
     try:
         min_size_filter = int(min_size_bytes) if min_size_bytes else None
@@ -206,6 +225,8 @@ def api_assets_list_handler():
         folder=folder,
         stats=list_stats,
         favorites_only=favorites_only,
+        collection_id=collection_id,
+        similar_to=similar_to,
     )
     cache_used = assets is not None
     if assets is None:
@@ -230,8 +251,10 @@ def api_assets_list_handler():
             folder=folder,
             stats=list_stats,
             favorites_only=favorites_only,
+            collection_id=collection_id,
+            similar_to=similar_to,
         )
-        if assets is None and favorites_only:
+        if assets is None and (favorites_only or collection_id is not None or similar_to):
             assets = []
         if assets is None:
             assets = scan_assets(
@@ -272,10 +295,12 @@ def api_assets_list_handler():
             folder=folder,
             stats=list_stats,
             favorites_only=favorites_only,
+            collection_id=collection_id,
+            similar_to=similar_to,
         )
         assets = refreshed_assets if refreshed_assets is not None else assets
         cache_used = False
-    payload = {'assets': assets, 'root': root_key, 'cache': {'used': cache_used, 'indexed': index_has_assets(root_path)}}
+    payload = {'server_time': server_time, 'assets': assets, 'root': root_key, 'cache': {'used': cache_used, 'indexed': index_has_assets(root_path)}}
     if 'total' in list_stats:
         payload['total'] = list_stats['total']
     return jsonify(payload)
@@ -643,3 +668,187 @@ def api_assets_open_folder_handler():
         logger.exception('Open folder failed for %s', folder)
         abort(500, str(e))
     return jsonify({'opened': folder})
+
+
+_refresh_lock = threading.Lock()
+_last_refresh: dict[str, float] = {}
+CHANGE_POLL_MIN_REFRESH_SECONDS = 2.0
+
+
+def _throttled_refresh(root_path: str) -> None:
+    """Incrementally re-index at most every couple of seconds, however many tabs are polling."""
+    with _refresh_lock:
+        now = time.time()
+        if now - _last_refresh.get(root_path, 0) < CHANGE_POLL_MIN_REFRESH_SECONDS:
+            return
+        _last_refresh[root_path] = now
+    try:
+        refresh_asset_index(root_path)
+    except Exception:
+        logger.exception('Asset index refresh failed for root: %s', root_path)
+
+
+def api_assets_changes_handler():
+    """Count media added since `since` that match the current filters (for the live 'N new' pill)."""
+    asset_roots = _get_asset_roots_snapshot()
+    try:
+        root_path = resolve_requested_root(request.args.get('root'), asset_roots)
+        since = float(request.args.get('since', '0'))
+        collection_id = int(request.args['collection']) if request.args.get('collection') else None
+    except ValueError:
+        abort(400, 'Invalid parameter')
+    except Exception as error:
+        abort(400, str(error))
+    server_time = time.time()
+    _throttled_refresh(root_path)
+    ext = request.args.get('ext', '')
+    stats: dict = {}
+    assets = list_indexed_assets(
+        root=root_path,
+        query=request.args.get('q', ''),
+        extensions=[ext] if ext else None,
+        limit=1,
+        include_metadata=False,
+        modified_after_ts=since + 1e-6,
+        metadata_badge_filter=[item for item in request.args.get('metadata_badges', '').split(',') if item],
+        folder=request.args.get('folder', ''),
+        stats=stats,
+        favorites_only=request.args.get('favorites', '').lower() in {'1', 'true', 'yes'},
+        collection_id=collection_id,
+    )
+    return jsonify({'new_count': int(stats.get('total', 0)) if assets is not None else 0, 'server_time': server_time})
+
+
+def api_assets_facets_handler():
+    asset_roots = _get_asset_roots_snapshot()
+    try:
+        root_path = resolve_requested_root(request.args.get('root'), asset_roots)
+    except Exception as error:
+        abort(400, str(error))
+    facets = asset_facets(root_path, request.args.get('folder', ''))
+    return jsonify({'root': request.args.get('root'), 'facets': facets})
+
+
+def _collection_root(payload_root):
+    asset_roots = _get_asset_roots_snapshot()
+    try:
+        return resolve_requested_root(payload_root, asset_roots)
+    except Exception as error:
+        abort(400, str(error))
+
+
+def api_collections_list_handler():
+    root_path = _collection_root(request.args.get('root'))
+    return jsonify({'collections': list_collections(root_path)})
+
+
+def api_collections_create_handler():
+    payload = request.get_json(silent=True) or {}
+    root_path = _collection_root(payload.get('root'))
+    try:
+        collection = create_collection(root_path, payload.get('name', ''))
+        paths = [path for path in payload.get('paths') or [] if isinstance(path, str)]
+        if paths:
+            update_collection_items(root_path, collection['id'], _paths_in_root(paths, root_path), add=True)
+    except ValueError as error:
+        abort(400, str(error))
+    return jsonify({'collection': collection, 'collections': list_collections(root_path)}), 201
+
+
+def _paths_in_root(paths: list[str], root_path: str) -> list[str]:
+    asset_roots = _get_asset_roots_snapshot()
+    resolved = []
+    for path in paths:
+        try:
+            abs_path = resolve_requested_file(path, asset_roots)
+        except Exception:
+            continue
+        root = find_root_for_path(abs_path, asset_roots)
+        if root and os.path.abspath(root.path) == os.path.abspath(root_path):
+            resolved.append(abs_path)
+    return resolved
+
+
+def api_collection_items_handler(collection_id: int):
+    payload = request.get_json(silent=True) or {}
+    root_path = _collection_root(payload.get('root'))
+    paths = [path for path in payload.get('paths') or [] if isinstance(path, str)]
+    add = payload.get('action', 'add') != 'remove'
+    try:
+        changed = update_collection_items(
+            root_path, collection_id, _paths_in_root(paths, root_path) if add else paths, add=add
+        )
+    except LookupError as error:
+        abort(404, str(error))
+    return jsonify({'changed': changed, 'collections': list_collections(root_path)})
+
+
+def api_collection_update_handler(collection_id: int):
+    payload = request.get_json(silent=True) or {}
+    root_path = _collection_root(payload.get('root'))
+    try:
+        rename_collection(root_path, collection_id, payload.get('name', ''))
+    except LookupError as error:
+        abort(404, str(error))
+    except ValueError as error:
+        abort(400, str(error))
+    return jsonify({'collections': list_collections(root_path)})
+
+
+def api_collection_delete_handler(collection_id: int):
+    root_path = _collection_root(request.args.get('root'))
+    try:
+        delete_collection(root_path, collection_id)
+    except LookupError as error:
+        abort(404, str(error))
+    return jsonify({'collections': list_collections(root_path)})
+
+
+def _comfyui_url() -> str:
+    from settings_model import Settings
+
+    url = str(Settings().integrations.comfyui_url or '').strip().rstrip('/')
+    if not re.match(r'^https?://', url):
+        raise ValueError('Set a ComfyUI URL (http://host:port) in Settings > Integrations.')
+    return url
+
+
+def api_comfy_queue_handler():
+    """Re-queue an image's embedded API-format workflow ("prompt" PNG chunk) in ComfyUI, unchanged."""
+    asset_roots = _get_asset_roots_snapshot()
+    payload = request.get_json(silent=True) or {}
+    try:
+        abs_path = resolve_requested_file(payload.get('path'), asset_roots)
+        if not find_root_for_path(abs_path, asset_roots):
+            raise PermissionError('File not in allowed roots')
+        with Image.open(abs_path) as image:
+            raw_prompt = image.info.get('prompt')
+        if not raw_prompt:
+            return jsonify({'error': 'This image has no embedded ComfyUI workflow to queue.'}), 422
+        prompt = json.loads(raw_prompt)
+        if not isinstance(prompt, dict) or not prompt:
+            return jsonify({'error': 'The embedded workflow is not in ComfyUI API format.'}), 422
+        base_url = _comfyui_url()
+    except (ValueError, json.JSONDecodeError) as error:
+        return jsonify({'error': str(error)}), 422
+    except Exception as error:
+        abort(400, str(error))
+
+    body = json.dumps({'prompt': prompt, 'client_id': 'bubba-media-viewer'}).encode('utf-8')
+    comfy_request = urllib.request.Request(
+        f'{base_url}/prompt', data=body, headers={'Content-Type': 'application/json'}, method='POST'
+    )
+    try:
+        with urllib.request.urlopen(comfy_request, timeout=10) as response:
+            result = json.loads(response.read().decode('utf-8') or '{}')
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode('utf-8', 'replace')[:500]
+        try:
+            parsed = json.loads(detail)
+            detail = parsed.get('error', {}).get('message') or detail
+        except Exception:
+            pass
+        return jsonify({'error': f'ComfyUI rejected the workflow: {detail}'}), 502
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return jsonify({'error': f'Could not reach ComfyUI at {base_url}. Is it running?'}), 502
+    return jsonify({'queued': True, 'prompt_id': result.get('prompt_id'), 'number': result.get('number'), 'comfyui_url': base_url})

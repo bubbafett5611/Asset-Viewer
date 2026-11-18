@@ -2,6 +2,26 @@ import { AssetCard } from '/vue/components/AssetCard.js';
 import { AssetDetailsPanel } from '/vue/components/AssetDetailsPanel.js';
 import { SavedViews } from '/vue/components/SavedViews.js';
 import { ReviewSlideshow } from '/vue/components/ReviewSlideshow.js';
+import { SmartSearch } from '/vue/components/SmartSearch.js';
+import { LIBRARY_KEY } from '/vue/composables/useLibraryExtras.js';
+
+const dayKey = (ts) => {
+  const date = new Date(Number(ts) * 1000);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+};
+
+export function formatDayLabel(key) {
+  const [year, month, day] = String(key).split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const diffDays = Math.round((startOfToday - date) / 86400000);
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  const options = { weekday: 'short', month: 'short', day: 'numeric' };
+  if (year !== today.getFullYear()) options.year = 'numeric';
+  return date.toLocaleDateString(undefined, options);
+}
 
 export const AssetsView = {
   name: 'AssetsView',
@@ -9,10 +29,52 @@ export const AssetsView = {
     SavedViews,
     ReviewSlideshow,
     AssetCard,
-    AssetDetailsPanel
+    AssetDetailsPanel,
+    SmartSearch
   },
+  inject: { library: { from: LIBRARY_KEY, default: null } },
   data() {
-    return { moveDestination: '', filtersOpen: false, dragPaths: [], dropTarget: null };
+    return {
+      moveDestination: '',
+      filtersOpen: false,
+      dragPaths: [],
+      dropTarget: null,
+      collectionDropTarget: null,
+      showAllDays: false,
+      scrollDayLabel: ''
+    };
+  },
+  computed: {
+    timelineActive() {
+      return this.filters.sortBy === 'modified' && !this.filters.similarTo;
+    },
+    // First card of each calendar day gets a day marker; cards stay uniform so virtualization still works.
+    dayMarkers() {
+      const markers = new Map();
+      if (!this.timelineActive) return markers;
+      let previous = '';
+      for (const asset of this.assets) {
+        const key = dayKey(asset.modified_ts);
+        if (key !== previous) markers.set(asset.path, formatDayLabel(key));
+        previous = key;
+      }
+      return markers;
+    },
+    timelineDays() {
+      const days = this.library?.facets?.days || [];
+      return this.showAllDays ? days : days.slice(0, 10);
+    },
+    activeDay() {
+      const match = /(?:^|\s)on:(\d{4}-\d{2}-\d{2})(?:\s|$)/.exec(this.filters.q || '');
+      return match ? match[1] : '';
+    },
+    activeCollection() {
+      return this.filters.collection ? this.library?.collectionById(this.filters.collection) : null;
+    },
+    selectedPathList() {
+      const list = this.assets.filter((asset) => this.selectedPathSetHas(asset.path)).map((asset) => asset.path);
+      return list.length ? list : this.selectedPath ? [this.selectedPath] : [];
+    }
   },
   mounted() {
     this.onOpenReviewRequest = (event) => this.openReview({ path: event.detail?.path });
@@ -72,6 +134,60 @@ export const AssetsView = {
       if (!paths.length) return;
       event.preventDefault();
       await this.moveSelectedAssets(folder.path, paths);
+    },
+    onCollectionDragOver(collection, event) {
+      if (!this.dragPaths.length) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+      this.collectionDropTarget = collection.id;
+    },
+    async onCollectionDrop(collection, event) {
+      const paths = this.dragPaths.slice();
+      this.collectionDropTarget = null;
+      this.dragPaths = [];
+      if (!paths.length) return;
+      event.preventDefault();
+      await this.library.addToCollection(collection, paths);
+    },
+    selectCollection(collection) {
+      this.filters.collection = String(this.filters.collection) === String(collection.id) ? '' : String(collection.id);
+    },
+    async addSelectionToCollection(collection, event) {
+      event?.target?.closest?.('details')?.removeAttribute('open');
+      if (collection) {
+        await this.library.addToCollection(collection, this.selectedPathList);
+      } else {
+        await this.library.createCollection(this.selectedPathList);
+      }
+    },
+    pickDay(day) {
+      if (this.activeDay === day) {
+        this.library.applySearch('', { replaceField: 'on' });
+      } else {
+        this.library.applySearch(`on:${day}`, { replaceField: 'on' });
+      }
+    },
+    formatDayLabel,
+    onGridScroll(event) {
+      this.onAssetListScroll(event);
+      if (this.scrollFrame) return;
+      this.scrollFrame = requestAnimationFrame(() => {
+        this.scrollFrame = 0;
+        this.updateScrollDay();
+      });
+    },
+    // Floating date pill: the day of the card currently at the top of the grid.
+    updateScrollDay() {
+      const list = this.$el?.querySelector?.('.asset-list');
+      if (!list || !this.timelineActive || list.scrollTop < 40) {
+        this.scrollDayLabel = '';
+        return;
+      }
+      const rect = list.getBoundingClientRect();
+      const probe = document.elementFromPoint(rect.left + 40, rect.top + 24);
+      const shell = probe?.closest?.('.asset-card-shell');
+      const ts = shell?.dataset?.modified;
+      this.scrollDayLabel = ts ? formatDayLabel(dayKey(ts)) : this.scrollDayLabel;
     },
     formatCount(value) {
       return value >= 10000 ? `${Math.round(value / 1000)}k` : value.toLocaleString();
@@ -358,6 +474,50 @@ export const AssetsView = {
                                     </button>
                                 </div>
                             </div>
+                            <div v-if="library && filters.root" class="folder-tree-section">
+                                <div class="folder-tree-heading folder-tree-heading--actions">
+                                    <span>Collections</span>
+                                    <button class="button button--compact button--ghost" type="button" @click="library.createCollection([])">+ New</button>
+                                </div>
+                                <p v-if="!library.collections.length" class="folder-tree-hint">Group keepers into named sets. Drag cards here or use the selection bar.</p>
+                                <div
+                                    v-for="collection in library.collections"
+                                    :key="collection.id"
+                                    class="folder-tree-row collection-row"
+                                    :class="{ active: String(filters.collection) === String(collection.id), 'is-drop-target': collectionDropTarget === collection.id }"
+                                    @dragover="onCollectionDragOver(collection, $event)"
+                                    @dragleave="collectionDropTarget = null"
+                                    @drop="onCollectionDrop(collection, $event)"
+                                >
+                                    <span class="collection-icon" aria-hidden="true">▣</span>
+                                    <button class="folder-tree-item" type="button" :title="collection.name" @click="selectCollection(collection)">
+                                        <span class="folder-tree-label">{{ collection.name }}</span>
+                                        <span class="folder-tree-count">{{ formatCount(collection.count) }}</span>
+                                    </button>
+                                    <div class="collection-row-actions">
+                                        <button type="button" :aria-label="'Rename ' + collection.name" title="Rename" @click="library.renameCollection(collection)">✎</button>
+                                        <button type="button" :aria-label="'Delete ' + collection.name" title="Delete collection" @click="library.deleteCollection(collection)">×</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div v-if="library && library.facets && library.facets.days && library.facets.days.length" class="folder-tree-section">
+                                <div class="folder-tree-heading">Timeline</div>
+                                <div
+                                    v-for="entry in timelineDays"
+                                    :key="entry.day"
+                                    class="folder-tree-row timeline-row"
+                                    :class="{ active: activeDay === entry.day }"
+                                >
+                                    <span class="timeline-dot" aria-hidden="true"></span>
+                                    <button class="folder-tree-item" type="button" :title="'Show media from ' + entry.day" @click="pickDay(entry.day)">
+                                        <span class="folder-tree-label">{{ formatDayLabel(entry.day) }}</span>
+                                        <span class="folder-tree-count">{{ formatCount(entry.count) }}</span>
+                                    </button>
+                                </div>
+                                <button v-if="library.facets.days.length > 10" class="folder-tree-more" type="button" @click="showAllDays = !showAllDays">
+                                    {{ showAllDays ? 'Show fewer days' : 'Show all ' + library.facets.days.length + ' days' }}
+                                </button>
+                            </div>
                         </div>
                         <SavedViews ref="savedViews" :filters="filters" />
                     </aside></Teleport>
@@ -365,7 +525,7 @@ export const AssetsView = {
                     <div class="assets-browser-main">
                         <div class="media-breadcrumb" aria-label="Current folder"><strong>{{ currentRootLabel }}</strong><span v-if="filters.folder"> / {{ filters.folder }}</span><span v-else> / All folders</span></div>
                         <div class="media-toolbar">
-                            <input id="searchInput" :ref="searchInputRef" v-model="filters.q" class="input search-field" type="search" aria-label="Search" placeholder="Search filenames or paths" />
+                            <SmartSearch v-model="filters.q" :input-ref="searchInputRef" />
                             <button class="button button--compact" type="button" :aria-expanded="filtersOpen" aria-controls="media-filters" @click="filtersOpen = !filtersOpen">Filters</button>
                             <button class="button button--compact favorites-filter-button" type="button" :aria-pressed="filters.favorites === '1'" title="Show only favorites" @click="filters.favorites = filters.favorites ? '' : '1'">★ Favorites</button>
                             <button class="button button--compact" type="button" :disabled="!filters.root" @click="$refs.savedViews.openSave($event)">Saved views</button>
@@ -378,7 +538,9 @@ export const AssetsView = {
                             <label class="filter-favorites"><input type="checkbox" :checked="filters.favorites === '1'" @change="filters.favorites = $event.target.checked ? '1' : ''" /> Favorites only</label>
                             <label>Metadata <select id="metadataFilterSelect" v-model="filters.metadataBadge" class="select"><option value="">Any metadata</option><option v-for="filter in metadataFilterList" :key="filter.key" :value="filter.key">{{ filter.label }}</option></select></label>
                         </div>
-                        <div v-if="filters.q || filters.ext || filters.metadataBadge || filters.favorites" class="active-filters" aria-label="Active filters">
+                        <div v-if="filters.q || filters.ext || filters.metadataBadge || filters.favorites || filters.collection || filters.similarTo" class="active-filters" aria-label="Active filters">
+                            <button v-if="filters.similarTo" type="button" class="filter-chip filter-chip--similar" aria-label="Stop showing similar images" @click="filters.similarTo = ''">≈ Similar to {{ filters.similarToName || 'selection' }} ×</button>
+                            <button v-if="activeCollection" type="button" class="filter-chip" aria-label="Remove collection filter" @click="filters.collection = ''">▣ {{ activeCollection.name }} ×</button>
                             <button v-if="filters.favorites" type="button" class="filter-chip" aria-label="Remove favorites filter" @click="filters.favorites = ''">★ Favorites ×</button>
                             <button v-if="filters.q" type="button" class="filter-chip" aria-label="Remove search filter" @click="filters.q = ''">Search: {{ filters.q }} ×</button>
                             <button v-if="filters.ext" type="button" class="filter-chip" aria-label="Remove extension filter" @click="filters.ext = ''">{{ filters.ext }} ×</button>
@@ -395,6 +557,11 @@ export const AssetsView = {
                             <button v-if="selectedCount > 1" class="button button--compact" type="button" :disabled="!canCompareSelection" title="Select exactly two previewable images" @click="openCompareSelection">Compare</button>
                             <details class="action-menu"><summary>Move</summary><div class="action-menu-panel"><label for="moveDestination">Destination folder</label><select id="moveDestination" v-model="moveDestination" class="select"><option v-for="folder in folderTree" :key="folder.path" :value="folder.path">{{ folder.path || 'root' }}</option></select><button type="button" @click="moveSelectedAssets(moveDestination)">Move selected</button></div></details>
                             <button class="button button--compact" type="button" @click="toggleFavorite()">★ Favorite</button>
+                            <details v-if="library" class="action-menu"><summary>Collection</summary><div class="action-menu-panel">
+                                <button v-for="collection in library.collections" :key="collection.id" type="button" @click="addSelectionToCollection(collection, $event)">Add to {{ collection.name }}</button>
+                                <button type="button" @click="addSelectionToCollection(null, $event)">New collection from selection…</button>
+                                <button v-if="activeCollection" type="button" @click="library.removeFromCollection(activeCollection, selectedPathList)">Remove from {{ activeCollection.name }}</button>
+                            </div></details>
                             <button class="button button--compact" type="button" @click="copySelectedPaths">Copy paths</button>
                             <details class="action-menu"><summary>Export</summary><div class="action-menu-panel"><button type="button" @click="exportSelectedAssets('json')">Export JSON</button><button type="button" @click="exportSelectedAssets('csv')">Export CSV</button></div></details>
                             <button class="button button--compact button--danger" type="button" :disabled="isDeleting" title="Move selected media to trash. Shift-click permanently deletes without confirmation." @click="requestDeleteSelected">Delete</button>
@@ -406,19 +573,27 @@ export const AssetsView = {
                         <span>{{ rootsLoading ? 'Loading libraries…' : rootsError || assetError || statusText }}</span>
                         <button v-if="assetError && assets.length" class="button button--compact" type="button" @click="retryAssets">Retry</button>
                     </div>
+                    <div class="asset-list-overlays">
+                        <button v-if="library && library.liveNewCount > 0" class="live-new-pill" type="button" @click="library.applyLiveUpdates()">
+                            <span aria-hidden="true">↑</span> {{ library.liveNewCount }} new {{ library.liveNewCount === 1 ? 'image' : 'images' }}
+                        </button>
+                        <div v-else-if="scrollDayLabel" class="timeline-scroll-pill" aria-hidden="true">{{ scrollDayLabel }}</div>
+                    </div>
                     <div
                         :ref="assetListRef"
                         class="asset-list"
                         :class="[densityClass, { virtualized: shouldVirtualize }]"
                         :style="assetListStyle"
                         aria-live="polite"
-                        @scroll="onAssetListScroll"
+                        @scroll="onGridScroll"
                     >
                         <div v-if="!assets.length" class="media-empty">
                             <template v-if="rootsLoading || isLoading"><h2>Loading media…</h2><p>Your library will appear here.</p></template>
                             <template v-else-if="rootsError"><h2>Could not load libraries</h2><p>{{ rootsError }}</p><button class="button button--compact" type="button" @click="retryRoots">Retry</button></template>
                             <template v-else-if="!roots.length"><h2>Add your first library</h2><p>Choose a folder in Settings to start browsing.</p><button class="button button--compact" type="button" @click="openSettings">Open settings</button></template>
                             <template v-else-if="assetError"><h2>Could not load media</h2><p>{{ assetError }}</p><button class="button button--compact" type="button" @click="retryAssets">Retry</button></template>
+                            <template v-else-if="filters.similarTo"><h2>No similar images found</h2><p>Nothing in this library looks close enough to that image.</p><button class="button button--compact" type="button" @click="filters.similarTo = ''">Back to all media</button></template>
+                            <template v-else-if="activeCollection && !filters.q"><h2>“{{ activeCollection.name }}” is empty</h2><p>Drag cards onto the collection in the sidebar, or select media and use Collection in the selection bar.</p></template>
                             <template v-else-if="filters.favorites && !filters.q && !filters.ext && !filters.metadataBadge"><h2>No favorites here yet</h2><p>Star media with the ☆ on a card, the inspector, or the F key.</p><button class="button button--compact" type="button" @click="filters.favorites = ''">Show all media</button></template>
                             <template v-else-if="filters.q || filters.ext || filters.metadataBadge"><h2>No matching media</h2><p>Try a different search or clear the active filters.</p><button class="button button--compact" type="button" @click="clearMediaFilters">Clear filters</button></template>
                             <template v-else><h2>This folder has no media</h2><p>Choose another folder or drop supported images and videos here.</p></template>
@@ -434,6 +609,7 @@ export const AssetsView = {
                                     :multi-selecting="selectedCount > 0"
                                     :selected="selectedPathSetHas(asset.path)"
                                     :blur-enabled="blurThumbnails"
+                                    :day-label="dayMarkers.get(asset.path) || ''"
                                     @select="selectAsset"
                                     @open="openReview"
                                     @favorite="toggleFavorite"
@@ -451,6 +627,7 @@ export const AssetsView = {
                             :multi-selecting="selectedCount > 0"
                                     :selected="selectedPathSetHas(asset.path)"
                             :blur-enabled="blurThumbnails"
+                            :day-label="dayMarkers.get(asset.path) || ''"
                             @select="selectAsset"
                             @open="openReview"
                                     @favorite="toggleFavorite"
@@ -486,7 +663,7 @@ export const AssetsView = {
                 @open-folder="openContainingFolder"
                 @repair-metadata="repairSelectedMetadata"
                 @toggle-favorite="toggleFavorite"
-                @filter-by="(value) => { filters.q = value; }"
+                @filter-by="(query) => library ? library.applySearch(query) : (filters.q = query)"
                 @resize-preview="startPreviewResize"
             />
         </div>
